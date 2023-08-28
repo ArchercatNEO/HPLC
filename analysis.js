@@ -1,108 +1,115 @@
-export function ProcessFile(file, noise) {
-
-
-const reader = new FileReader();
-$area = 0;
-$baseline = [0];
-$floor = [];
-$peaks = [];
-$gapped = [];
-
-//parse the file
-const raw = reader.readAsText(file, "UTF-8");
-reader.onload = process;
-const byRow = explode("\n", raw);
-
-
-/*************************************************************************************************
-	esto lee el archivo y saca los datos y los guarda en
-	 times[]  y  data[]
-*************************************************************************************************/
-$ii=0;
-foreach($raw as $key=>$value){
-	$time = 1 * (explode("\t", $value)[0]);
-	if (8.85 > $time || $time > 36) continue;
-	
-	$times[$ii] = 1 * (explode("\t", $value)[0]);
-	$labels[$ii] = $times[$ii] % 150 == 0 ? "$times[$ii]" : "";
-	$data[$ii] = 1 * (explode("\t", $value)[1]);
-	$ii++;
+import { GenerateChart } from "./chart";
+export function ProcessFile(event, noise) {
+    var _a;
+    const file = (_a = event.target) === null || _a === void 0 ? void 0 : _a.files[0];
+    const reader = new FileReader();
+    reader.readAsText(file, "UTF-8");
+    reader.onload = (event) => Process(event, noise);
 }
-
-/*************************************************************************************************
-	esto calcula el baseline, al terminar 
-	 baseline[] tiene los indices donde hay que poner los puntos del baseline
-*************************************************************************************************/
-while (end($baseline) + 1 < count($data)){
-	
-	$gradient = 1e50;
-	$best = end($baseline);
-	// esto es para que no haya puntos consecutivos, 
-	// lo forzamos a que sean al menos 10 puntos entre minimos
-	$end = end($baseline) + 5;
-
-	for ($index = $end + 1; $index < count($data); $index++)
-	{
-		$grad_i = ($data[$index] - $data[$end])/($index - $end);
-		if ( $grad_i < $gradient)
-		{
-			$gradient = $grad_i;
-			$best = $index;
-		}
-	}
-	
-
-	$baseline[] = $best;
-}
-
-
-/*************************************************************************************************
-	esto conecta todos los puntos del baseline interpolando los puntos anteriores
-	y los guarda en $floor[]
-*************************************************************************************************/
-for ($index = 1; $index < count($baseline); $index++){
-
-	$start = $baseline[$index - 1];
-	$end = $baseline[$index];
-
-	$m = ($data[$end] - $data[$start])/($end - $start);
-
-//	echo "\n $data[$start]";
-
-	for ($x = 0; $x < $end - $start; $x++)
-		$floor[] = $m * $x + $data[$start];
-	
-}
-
-
-for ($index = 1; $index < count($data); $index++){
-
-	while ($data[$index - 1] > $data[$index]){
-		$area 
-		+= abs(($data[$index - 1] - $data[$index])/2) 
-		+ $data[$index - 1] - $floor[$index - 1]
-		+ abs(($floor[$index - 1] - $floor[$index])/2);
-		$index++;
-	}
-	
-	if ($index >= count($data)) break;
-
-	$peaks[] = $index;
-	$gapped[$index] = $data[$index];
-
-	while ($data[$index - 1] < $data[$index]){
-		$area 
-		+= abs(($data[$index - 1] - $data[$index])/2) 
-		+ $data[$index - 1] - $floor[$index - 1]
-		+ abs(($floor[$index - 1] - $floor[$index])/2);
-		$index++;
-	}
-		
-	
-	if ($index >= count($data)) break;
-
-	$peaks[] = $index;
-	$gapped[$index] = $data[$index];
-
+function Process(event, noise) {
+    var _a;
+    const areas = [];
+    const baseline = [0];
+    const floor = [];
+    const peaks = [];
+    const gapped = [];
+    //parse the file
+    const raw = (_a = event.target) === null || _a === void 0 ? void 0 : _a.result;
+    if (raw === null || raw === undefined) {
+        alert("File is empty or invalid");
+        return;
     }
+    const typedRaw = raw;
+    const byRow = explode("\n", typedRaw);
+    // Fill the data to be an array of arrays where each inner array is [time, value]
+    const fullData = byRow.map(e => explode("\t", e));
+    // Filter the times to only have data that happened between 8.85 and 36 time
+    const filteredData = fullData.filter(e => 8.85 < e[0] && e[0] < 36);
+    const times = filteredData.map(e => e[0]);
+    const values = filteredData.map(e => e[1]);
+    const labels = times.map(e => e % 150 === 0 ? e : "");
+    /*************************************************************************************************
+        esto calcula el baseline, al terminar
+         baseline[] tiene los indices donde hay que poner los puntos del baseline
+    *************************************************************************************************/
+    while (baseline[baseline.length - 1] + 1 < values.length) {
+        let gradient = Number.MAX_SAFE_INTEGER;
+        let best = baseline[baseline.length - 1];
+        // esto es para que no haya puntos consecutivos, 
+        // lo forzamos a que sean al menos 10 puntos entre minimos
+        const end = baseline[baseline.length - 1] + 5;
+        for (let i = end + 1; i < values.length; i++) {
+            let grad_i = (values[i] - values[end]) / (i - end);
+            if (grad_i < gradient) {
+                gradient = grad_i;
+                best = i;
+            }
+        }
+        baseline.push(best);
+    }
+    /*************************************************************************************************
+        esto conecta todos los puntos del baseline interpolando los puntos anteriores
+        y los guarda en $floor[]
+    *************************************************************************************************/
+    for (let i = 1; i < baseline.length; i++) {
+        // Left and right points 
+        let left = baseline[i - 1];
+        let right = baseline[i];
+        let gradient = (values[right] - values[left]) / (right - left);
+        // Interpolate between the left and right points based on the gradient
+        for (let x = 0; x < right - left; x++)
+            floor.push(gradient * x + values[left]);
+    }
+    for (let i = 1; i < values.length; i++) {
+        let area = 0;
+        while (values[i - 1] > values[i]) {
+            area
+                += Math.abs((values[i - 1] - values[i]) / 2)
+                    + values[i - 1] - floor[i - 1]
+                    + Math.abs((floor[i - 1] - floor[i]) / 2);
+            i++;
+        }
+        if (i >= values.length)
+            break;
+        peaks.push(i);
+        gapped[i] = values[i];
+        while (values[i - 1] < values[i]) {
+            area
+                += Math.abs((values[i - 1] - values[i]) / 2)
+                    + values[i - 1] - floor[i - 1]
+                    + Math.abs((floor[i - 1] - floor[i]) / 2);
+            i++;
+        }
+        if (i >= values.length)
+            break;
+        areas.push(area);
+        peaks.push(i);
+        gapped[i] = values[i];
+    }
+    const data = {
+        filteredData: filteredData,
+        times: times,
+        values: values,
+        areas: areas,
+        baseline: baseline,
+        floor: floor,
+        peaks: peaks,
+        gapped: gapped,
+        labels: labels,
+    };
+    console.log(data);
+    GenerateChart(data);
+}
+function explode(breakCharacter, array) {
+    let output = [];
+    let string = "";
+    for (let i = 0; i < array.length; i++) {
+        if (array[i] !== breakCharacter)
+            string += array[i];
+        else {
+            output.push(string);
+            string = "";
+        }
+    }
+    return output;
 }

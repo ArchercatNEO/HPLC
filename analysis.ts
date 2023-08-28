@@ -1,4 +1,8 @@
-export function ProcessFile(file: File, noise: number) {
+import { GenerateChart, ProcessedData } from "./chart";
+
+export function ProcessFile(event: Event, noise: number) {
+
+    const file = event.target?.files[0];
 
     const reader = new FileReader();
     reader.readAsText(file, "UTF-8");
@@ -115,7 +119,20 @@ function Process(event: ProgressEvent<FileReader>, noise: number){
         gapped[i] = values[i];
     }
 
-    data = {};
+    const data: ProcessedData = {
+        filteredData: filteredData,
+        times: times,
+        values: values,
+        areas : areas,
+        baseline: baseline,
+        floor: floor,
+        peaks: peaks,
+        gapped: gapped,
+        labels: labels,
+    };
+    console.log(data);
+
+    GenerateChart(data);
 }
 
     
