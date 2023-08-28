@@ -1,0 +1,9 @@
+{
+    "compilerOptions": {
+        "target": "ES6",
+        "lib": ["DOM", "ES2023", "ESNext"],
+        "strict": true
+    },
+    
+    "include": ["./"],
+}
