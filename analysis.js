@@ -1,7 +1,11 @@
 import { GenerateChart } from "./chart";
 export function ProcessFile(event, noise) {
-    var _a;
-    const file = (_a = event.target) === null || _a === void 0 ? void 0 : _a.files[0];
+    const target = event.target;
+    if (target === null || target === undefined) {
+        alert("Empty file");
+        return;
+    }
+    const file = target.files[0];
     const reader = new FileReader();
     reader.readAsText(file, "UTF-8");
     reader.onload = (event) => Process(event, noise);
@@ -20,9 +24,9 @@ function Process(event, noise) {
         return;
     }
     const typedRaw = raw;
-    const byRow = explode("\n", typedRaw);
+    const byRow = typedRaw.split("\n");
     // Fill the data to be an array of arrays where each inner array is [time, value]
-    const fullData = byRow.map(e => explode("\t", e));
+    const fullData = byRow.map(e => e.split("\t"));
     // Filter the times to only have data that happened between 8.85 and 36 time
     const filteredData = fullData.filter(e => 8.85 < e[0] && e[0] < 36);
     const times = filteredData.map(e => e[0]);
@@ -99,17 +103,4 @@ function Process(event, noise) {
     };
     console.log(data);
     GenerateChart(data);
-}
-function explode(breakCharacter, array) {
-    let output = [];
-    let string = "";
-    for (let i = 0; i < array.length; i++) {
-        if (array[i] !== breakCharacter)
-            string += array[i];
-        else {
-            output.push(string);
-            string = "";
-        }
-    }
-    return output;
 }
