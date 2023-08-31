@@ -1,5 +1,5 @@
-"use strict";
-function GenerateChart(data) {
+import * as Chartist from 'chartist';
+export function GenerateChart(data) {
     const plots = {
         series: [
             {
@@ -13,6 +13,14 @@ function GenerateChart(data) {
             {
                 name: 'series-3',
                 data: data.gapped
+            },
+            {
+                name: "series-4",
+                data: data.first
+            },
+            {
+                name: "series-5",
+                data: data.second
             }
         ],
     };
@@ -30,13 +38,22 @@ function GenerateChart(data) {
             'series-3': {
                 showLine: false,
                 showPoint: true
-            }
+            },
+            'series-4': {
+                showLine: false,
+                showPoint: true
+            },
+            'series-5': {
+                showLine: false,
+                showPoint: true
+            },
         }
     };
     /* Initialize the chart with the above settings */
-    const the_chart = new Chartist.Line('#my-chart', plots, options);
+    const the_chart = new Chartist.LineChart('#my-chart', plots, options);
     // Listening for draw events that get emitted by the Chartist chart
-    the_chart.on('draw', function (data) {
+    the_chart.on('draw', ChangeDraw);
+    function ChangeDraw(data) {
         // If the draw event was triggered from drawing a point on the line chart
         if (data.type === 'point') {
             // We are creating a new path SVG element that draws a triangle around the point coordinates
@@ -56,5 +73,5 @@ function GenerateChart(data) {
             // With data.element we get the Chartist SVG wrapper and we can replace the original point drawn by Chartist with our newly created triangle
             data.element.replace(triangle);
         }
-    });
+    }
 }

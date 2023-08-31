@@ -2,17 +2,36 @@
 <html>
   
   <head>
+    <!--
       <script language="javascript" src="plots/chartist.js"></script>
-      <script language="javascript" src="scripts/analysis.js"></script>
-      <script language="javascript" src="scripts/chart.js"></script>
+    -->
+      <script language="javascript" src="scripts/analysis.js" type="module application/javascript"></script>
+      <script language="javascript" src="scripts/chart.js" type="module application/javascript"></script>
+    
+      <script language="javascript" src="dist/bundle.js" type="application/javascript"></script>
       <link href="plots/chartist.css" rel="stylesheet" type="text/css">
       <link href="styles/styles.css" rel="stylesheet" type="text/css">
   </head>	
 
   <body>
-    <input type="file" onchange="ProcessFile(event)">
+    <input type="file" onchange="Server.ProcessFile(event)">
+    <form id="form" onsubmit="Submit()">
+      <input type="file" id="fileInput">
+      <input type="text" id="noiseInput">
+      <input type="button" value="Send File" onclick="Submit()">
+    </form>
+    
     <p id="yes"> Deberia haber texto </p>
     <div id="my-chart"> </div>
+    <script>
+      function Submit() {
+        const noise = document.getElementById("noiseInput").value;
+        const event = document.getElementById("fileInput").files[0];
+        console.log(event);
+        Server.ProcessFile(event, noise);
+      }
+    </script>
+    <p id="heya"></p>
   </body>
 
 </html>

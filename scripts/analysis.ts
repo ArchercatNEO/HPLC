@@ -1,14 +1,25 @@
-function ProcessFile(event: Event, noise: number) {
+import { GenerateChart, ProcessedData } from "./chart";
 
-    const target = event.target as any;
-    if (target === null || target === undefined) {
-        alert("Empty file");
-        return;
-    }
-    const file = target.files[0];
-
+export function ProcessFile(event: Event | File, noise: string) {
+    
     const reader = new FileReader();
-    reader.onload = (event) => Process(event, noise);
+    reader.onload = (event) => Process(event, parseFloat(noise));
+
+    let file: File;
+
+    if (event instanceof File)
+        file = event;
+    else{
+        const target = event.target as any;
+        if (target === null || target === undefined) {
+            alert("Empty file");
+            return;
+        }
+        file = target.files[0];
+    }
+    
+    
+    
     reader.readAsText(file, "UTF-8");
     
 }
@@ -38,8 +49,15 @@ function Process(event: ProgressEvent<FileReader>, noise: number){
     
     const baseline = GenerateBaseline(values);
     const floor = Interpolate(baseline, values);
-    const {peaks, gapped}  = GeneratePeaks(values);
-    const areas = GenerateAreas(values, floor, peaks);
+    const {peaks, gapped, first, second, valleys}  = GeneratePeaks(values, noise);
+    const {areas, ranges} = GenerateAreas(values, floor, valleys);
+
+    const table: string[] = []
+    
+    for (let i = 0; i < areas.length; i++)
+        table.push([ranges[i].map(e => times[e]).join("-"), areas[i], times[peaks[i]]].join(", "))
+
+    document.getElementById("heya")!.innerHTML = table.join("<br>");
     
     const data: ProcessedData = {
         filteredData: filteredData,
@@ -51,6 +69,8 @@ function Process(event: ProgressEvent<FileReader>, noise: number){
         peaks: peaks,
         gapped: gapped,
         labels: labels,
+        first: first,
+        second: second,
     };
 
     GenerateChart(data);
@@ -88,15 +108,25 @@ function GenerateBaseline(array: number[]): number[] {
     return output;
 }
 
-function GeneratePeaks(values: number[]) {
+function GeneratePeaks(values: number[], noise: number) {
     
     const first = Derivative(values);
     const second = Derivative(first);
+    const first0: (null | number)[] = [];
+    for (let i = 1; i < first.length; i++){
+        first0.push(first[i - 1] * first[i] <= -noise ? values[i - 1] : null)
+    }
+    const second0: (null | number)[] = [];
+    for (let i = 0; i < second.length; i++){
+        second0.push(second[i - 1] * second[i] <= -noise ? values[i - 1] : null)
+    }
 
     const output = {
         peaks: [] as number[],
         valleys: [] as number[],
-        gapped: [] as number[]
+        gapped: [] as number[],
+        first: first0,
+        second: second0
     };
 
     for (let i = 1; i < values.length; i++){
@@ -124,19 +154,19 @@ function GeneratePeaks(values: number[]) {
 }
 
 function GenerateAreas(values: number[], floor: number[], peaks: number[]) {
-
+    
+    const ranges: number[][] = [];
     const output: number[] = [];
-    for (let i = 1; i < peaks.length; i++)
+    for (let i = 1; i < peaks.length; i++){
+        ranges.push([peaks[i - 1], peaks[i]])
         output.push(AreaBetween(values, floor, peaks[i - 1], peaks[i]))
-    return output;
+    }
+        
+    return {
+        ranges: ranges,
+        areas : output
+    };
 
-}
-
-function Derivative(array: number[]) {
-    const output: number[] = [array[0], array[1]]
-    for (let i = 2; i < array.length; i++)
-        output.push((array[i] - array[i - 2])/2)
-    return output;
 }
 
 function AreaBetween(values: number[], floor: number[], start: number, end: number) {
@@ -146,6 +176,13 @@ function AreaBetween(values: number[], floor: number[], start: number, end: numb
         area += ( values[i] - floor[i] + values[i + 1] - floor[i + 1] ) / 2
     }
     return area;
+}
+
+function Derivative(array: number[]) {
+    const output: number[] = [array[0], array[1]]
+    for (let i = 2; i < array.length; i++)
+        output.push((array[i] - array[i - 2])/2)
+    return output;
 }
 
 /** 

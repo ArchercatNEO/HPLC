@@ -1,13 +1,18 @@
-"use strict";
-function ProcessFile(event, noise) {
-    const target = event.target;
-    if (target === null || target === undefined) {
-        alert("Empty file");
-        return;
-    }
-    const file = target.files[0];
+import { GenerateChart } from "./chart";
+export function ProcessFile(event, noise) {
     const reader = new FileReader();
-    reader.onload = (event) => Process(event, noise);
+    reader.onload = (event) => Process(event, parseFloat(noise));
+    let file;
+    if (event instanceof File)
+        file = event;
+    else {
+        const target = event.target;
+        if (target === null || target === undefined) {
+            alert("Empty file");
+            return;
+        }
+        file = target.files[0];
+    }
     reader.readAsText(file, "UTF-8");
 }
 function Process(event, noise) {
@@ -28,8 +33,12 @@ function Process(event, noise) {
     const labels = times.map(e => e % 150 === 0 ? e : "");
     const baseline = GenerateBaseline(values);
     const floor = Interpolate(baseline, values);
-    const { peaks, gapped } = GeneratePeaks(values);
-    const areas = GenerateAreas(values, floor, peaks);
+    const { peaks, gapped, first, second, valleys } = GeneratePeaks(values, noise);
+    const { areas, ranges } = GenerateAreas(values, floor, valleys);
+    const table = [];
+    for (let i = 0; i < areas.length; i++)
+        table.push([ranges[i].map(e => times[e]).join("-"), areas[i], times[peaks[i]]].join(", "));
+    document.getElementById("heya").innerHTML = table.join("<br>");
     const data = {
         filteredData: filteredData,
         times: times,
@@ -40,6 +49,8 @@ function Process(event, noise) {
         peaks: peaks,
         gapped: gapped,
         labels: labels,
+        first: first,
+        second: second,
     };
     GenerateChart(data);
 }
@@ -67,13 +78,23 @@ function GenerateBaseline(array) {
     }
     return output;
 }
-function GeneratePeaks(values) {
+function GeneratePeaks(values, noise) {
     const first = Derivative(values);
     const second = Derivative(first);
+    const first0 = [];
+    for (let i = 1; i < first.length; i++) {
+        first0.push(first[i - 1] * first[i] <= -noise ? values[i - 1] : null);
+    }
+    const second0 = [];
+    for (let i = 0; i < second.length; i++) {
+        second0.push(second[i - 1] * second[i] <= -noise ? values[i - 1] : null);
+    }
     const output = {
         peaks: [],
         valleys: [],
-        gapped: []
+        gapped: [],
+        first: first0,
+        second: second0
     };
     for (let i = 1; i < values.length; i++) {
         // While the graph is going down keep searching
@@ -96,16 +117,16 @@ function GeneratePeaks(values) {
     return output;
 }
 function GenerateAreas(values, floor, peaks) {
+    const ranges = [];
     const output = [];
-    for (let i = 1; i < peaks.length; i++)
+    for (let i = 1; i < peaks.length; i++) {
+        ranges.push([peaks[i - 1], peaks[i]]);
         output.push(AreaBetween(values, floor, peaks[i - 1], peaks[i]));
-    return output;
-}
-function Derivative(array) {
-    const output = [array[0], array[1]];
-    for (let i = 2; i < array.length; i++)
-        output.push((array[i] - array[i - 2]) / 2);
-    return output;
+    }
+    return {
+        ranges: ranges,
+        areas: output
+    };
 }
 function AreaBetween(values, floor, start, end) {
     let area = 0;
@@ -113,6 +134,12 @@ function AreaBetween(values, floor, start, end) {
         area += (values[i] - floor[i] + values[i + 1] - floor[i + 1]) / 2;
     }
     return area;
+}
+function Derivative(array) {
+    const output = [array[0], array[1]];
+    for (let i = 2; i < array.length; i++)
+        output.push((array[i] - array[i - 2]) / 2);
+    return output;
 }
 /**
  * Use Interpolation and gradients to draw a straight line between every point in indexArray using valuesArray
