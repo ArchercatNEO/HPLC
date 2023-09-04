@@ -14,21 +14,33 @@
   </head>	
 
   <body>
-    <input type="file" onchange="Server.ProcessFile(event)">
     <form id="form" onsubmit="Submit()">
-      <input type="file" id="fileInput">
-      <input type="text" id="noiseInput">
+      <label for="slider">Select a Value:</label>
+      <input type="range" id="slider" name="slider" min="0.01" max="1" step="0.01">
+      <output for="slider" id="sliderValue">50</output>
+      <input type="file" id="fileInput" onchange="Submit()">
+      <input type="text" id="noiseInput" onchange="Submit()">
       <input type="button" value="Send File" onclick="Submit()">
     </form>
     
     <p id="yes"> Deberia haber texto </p>
     <div id="my-chart"> </div>
     <script>
+      const slider = document.getElementById("slider");
+      const sliderValue = document.getElementById("sliderValue");
+      const noise = document.getElementById("noiseInput");
+      const files = document.getElementById("fileInput");
+
+      const reader = new FileReader();
+      reader.onload = (event) => Server.Process(event, parseFloat(noise));
+
+      slider.addEventListener("input", () => {
+        sliderValue.textContent = slider.value * noise.value;
+        Submit();
+      });
+
       function Submit() {
-        const noise = document.getElementById("noiseInput").value;
-        const event = document.getElementById("fileInput").files[0];
-        console.log(event);
-        Server.ProcessFile(event, noise);
+        Server.ProcessFile(files.files, reader, noise.value);
       }
     </script>
     <p id="heya"></p>

@@ -70,7 +70,8 @@ export function GenerateChart(data: ProcessedData){
 
 
     /* Initialize the chart with the above settings */
-    const  the_chart = new Chartist.LineChart('#my-chart', plots, options);
+
+    const the_chart = new Chartist.LineChart('#my-chart', plots, options);
 
     // Listening for draw events that get emitted by the Chartist chart
     the_chart.on('draw', ChangeDraw);

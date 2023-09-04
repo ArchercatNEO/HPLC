@@ -1,30 +1,16 @@
 import { GenerateChart, ProcessedData } from "./chart";
 
-export function ProcessFile(event: Event | File, noise: string) {
+export function ProcessFile(files: File[], reader: FileReader, noise: string) {
     
-    const reader = new FileReader();
-    reader.onload = (event) => Process(event, parseFloat(noise));
-
-    let file: File;
-
-    if (event instanceof File)
-        file = event;
-    else{
-        const target = event.target as any;
-        if (target === null || target === undefined) {
-            alert("Empty file");
-            return;
-        }
-        file = target.files[0];
+    
+    for (let file of files){
+        reader.readAsText(file, "UTF-8");
     }
-    
-    
-    
-    reader.readAsText(file, "UTF-8");
+        
     
 }
 
-function Process(event: ProgressEvent<FileReader>, noise: number){
+export function Process(event: ProgressEvent<FileReader>, noise: number){
 
     const raw = event.target?.result as string | null | undefined;
 
