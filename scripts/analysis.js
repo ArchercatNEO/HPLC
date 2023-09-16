@@ -22,7 +22,7 @@ export function Process(event, noise) {
     const labels = times.map(e => e % 150 === 0 ? e : "");
     const baseline = GenerateBaseline(values);
     const floor = Interpolate(baseline, values);
-    const { peaks, gapped, first, second, valleys } = GeneratePeaks(values, noise);
+    const { peaks, gapped, first0, second0, valleys } = GeneratePeaks(values, noise);
     const { areas, ranges } = GenerateAreas(values, floor, valleys);
     const table = [];
     for (let i = 0; i < areas.length; i++)
@@ -38,8 +38,8 @@ export function Process(event, noise) {
         peaks: peaks,
         gapped: gapped,
         labels: labels,
-        first: first,
-        second: second,
+        first: first0,
+        second: second0,
     };
     GenerateChart(data);
 }
@@ -70,21 +70,19 @@ function GenerateBaseline(array) {
 function GeneratePeaks(values, noise) {
     const first = Derivative(values);
     const second = Derivative(first);
-    const first0 = [];
-    for (let i = 1; i < first.length; i++) {
-        first0.push(first[i - 1] * first[i] <= -noise ? values[i - 1] : null);
-    }
-    const second0 = [];
-    for (let i = 0; i < second.length; i++) {
-        second0.push(second[i - 1] * second[i] <= -noise ? values[i - 1] : null);
-    }
-    const output = {
-        peaks: [],
-        valleys: [],
-        gapped: [],
-        first: first0,
-        second: second0
-    };
+    const firstIndex = [];
+    for (let i = 1; i < first.length; i++)
+        if (first[i - 1] * first[i] <= -noise)
+            firstIndex.push(i);
+    const secondIndex = [];
+    for (let i = 1; i < second.length; i++)
+        if (second[i - 1] * second[i] <= -noise)
+            secondIndex.push(i);
+    const first0 = Array(values.length).fill(null).map((val, i) => firstIndex.includes(i) ? values[i] : null);
+    const second0 = Array(values.length).fill(null).map((val, i) => secondIndex.includes(i) ? values[i] : null);
+    const peaks = [];
+    const valleys = [];
+    const gapped = [];
     for (let i = 1; i < values.length; i++) {
         // While the graph is going down keep searching
         while (values[i - 1] > values[i])
@@ -92,18 +90,25 @@ function GeneratePeaks(values, noise) {
         if (i >= values.length)
             break;
         // Found minimum
-        output.valleys.push(i);
-        output.gapped[i] = values[i];
+        valleys.push(i);
+        gapped[i] = values[i];
         // While the graph is going up keep searching
         while (values[i - 1] < values[i])
             i++;
         if (i >= values.length)
             break;
         // Found maximum
-        output.peaks.push(i);
-        output.gapped[i] = values[i];
+        peaks.push(i);
+        gapped[i] = values[i];
     }
-    return output;
+    console.log(first0);
+    return {
+        peaks,
+        valleys,
+        gapped,
+        first0,
+        second0
+    };
 }
 function GenerateAreas(values, floor, peaks) {
     const ranges = [];

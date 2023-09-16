@@ -50,7 +50,7 @@ export function GenerateChart(data: ProcessedData){
                 showLine: true,
                 showPoint: false
             },
-                'series-2': {
+            'series-2': {
                 showPoint: false
             },
             'series-3': {
