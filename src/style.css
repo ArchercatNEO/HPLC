@@ -1,3 +1,30 @@
+.ct-series-a .ct-line {
+  /* Set the colour of this series line */
+  stroke: blue !important;
+  /* Control the thikness of your lines */
+  stroke-width: 1px;
+  /* Create a dashed line with a pattern */
+  --stroke-dasharray: 10px 20px;
+}
+
+.ct-series-d .ct-line {
+/* Set the colour of this series line */
+stroke: green !important;
+/* Control the thikness of your lines */
+stroke-width: 1px;
+/* Create a dashed line with a pattern */
+--stroke-dasharray: 10px 20px;
+}
+
+.ct-series-e .ct-line {
+/* Set the colour of this series line */
+stroke: red !important;
+/* Control the thikness of your lines */
+stroke-width: 1px;
+/* Create a dashed line with a pattern */
+--stroke-dasharray: 10px 20px;
+}
+
 .ct-label {
   fill: rgba(0, 0, 0, 0.4);
   color: rgba(0, 0, 0, 0.4);

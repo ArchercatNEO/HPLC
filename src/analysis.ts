@@ -1,15 +1,5 @@
 import { GenerateChart, ProcessedData } from "./chart";
 
-export function ProcessFile(files: File[], reader: FileReader, noise: string) {
-    
-    
-    for (let file of files){
-        reader.readAsText(file, "UTF-8");
-    }
-        
-    
-}
-
 export function Process(event: ProgressEvent<FileReader>, noise: number){
 
     const raw = event.target?.result as string | null | undefined;
@@ -35,7 +25,7 @@ export function Process(event: ProgressEvent<FileReader>, noise: number){
     
     const baseline = GenerateBaseline(values);
     const floor = Interpolate(baseline, values);
-    const {peaks, gapped, first0, second0, valleys}  = GeneratePeaks(values, noise);
+    const {peaks, gapped, first0, second2, valleys, second}  = GeneratePeaks(values, noise);
     const {areas, ranges} = GenerateAreas(values, floor, valleys);
 
     const table: string[] = []
@@ -43,7 +33,7 @@ export function Process(event: ProgressEvent<FileReader>, noise: number){
     for (let i = 0; i < areas.length; i++)
         table.push([ranges[i].map(e => times[e]).join("-"), areas[i], times[peaks[i]]].join(", "))
 
-    document.getElementById("heya")!.innerHTML = table.join("<br>");
+    document.getElementById("table")!.innerHTML = table.join("<br>");
     
     const data: ProcessedData = {
         filteredData: filteredData,
@@ -56,7 +46,8 @@ export function Process(event: ProgressEvent<FileReader>, noise: number){
         gapped: gapped,
         labels: labels,
         first: first0,
-        second: second0,
+        second: second2,
+        more: second
     };
 
     GenerateChart(data);
@@ -99,19 +90,27 @@ function GeneratePeaks(values: number[], noise: number) {
     const first = Derivative(values);
     const second = Derivative(first);
 
+    console.log(first);
+
     const firstIndex: number[] = [];
-    for (let i = 1; i < first.length; i++)
+    for (let i = 1; i < first.length; i++){
         if (first[i - 1] * first[i] <= -noise) firstIndex.push(i)
+        console.log(first[i - 1] * first[i])
+    }
+    
+    console.log(firstIndex)
+
+    const second2: any[] = []/*second.map((e, i) => e < -noise ? values[i] : null);*/
     
     const secondIndex: number[] = [];
     for (let i = 1; i < second.length; i++)
         if (second[i - 1] * second[i] <= -noise) secondIndex.push(i)
 
     const first0: (null | number)[] = 
-    Array(values.length).fill(null).map((val, i) => firstIndex.includes(i) ? values[i] : null);
+    Array(values.length).fill(null).map((_, i) => firstIndex.includes(i) ? values[i] : null);
 
-    const second0: (null | number)[] = 
-    Array(values.length).fill(null).map((val, i) => secondIndex.includes(i) ? values[i] : null);
+    //const second0: (null | number)[] = 
+    //Array(values.length).fill(null).map((_, i) => secondIndex.includes(i) ? values[i] : null);
     
 
     const peaks: number[] = [];
@@ -139,14 +138,15 @@ function GeneratePeaks(values: number[], noise: number) {
         gapped[i] = values[i];
     }
 
-    console.log(first0);
+
 
     return {
         peaks,
         valleys,
         gapped,
         first0,
-        second0
+        second2,
+        second
     };
 }
 
