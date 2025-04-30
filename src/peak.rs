@@ -1,8 +1,8 @@
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Peak {
     pub start: (f32, f32),
     pub turning_point: (f32, f32),
-    pub end: (f32, f32)
+    pub end: (f32, f32),
 }
 
 impl Peak {
@@ -26,7 +26,7 @@ impl Peak {
             } else {
                 if peak.turning_point.1 - peak.start.1 > 50.0 {
                     result.push(peak);
-                } 
+                }
                 peak = Peak::default();
             }
         }

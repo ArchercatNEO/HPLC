@@ -15,6 +15,10 @@
         pkgs.pkg-config
 
         pkgs.fontconfig
+        pkgs.freetype
+        pkgs.libxkbcommon
+        pkgs.vulkan-loader
+        pkgs.wayland
 
         pkgs.cargo
         pkgs.rustc
@@ -22,6 +26,14 @@
       ];
 
       env = {
+        LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+          pkgs.fontconfig
+          pkgs.freetype
+          pkgs.libxkbcommon
+          pkgs.vulkan-loader
+          pkgs.wayland
+        ];
+
         RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
       };
     };
