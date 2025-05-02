@@ -1,3 +1,5 @@
+use std::path;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Peak {
     pub start: (f32, f32),
@@ -6,7 +8,10 @@ pub struct Peak {
 }
 
 impl Peak {
-    pub fn find_peaks<T: IntoIterator<Item = (f32, f32)>>(iter: T) -> Vec<Self> {
+    pub fn find_peaks<T: IntoIterator<Item = (f32, f32)>>(
+        iter: T,
+        noise_tolerance: f32,
+    ) -> Vec<Self> {
         let mut result = vec![];
 
         let mut peak = Peak::default();
@@ -24,7 +29,7 @@ impl Peak {
             if peak.end == (0.0, 0.0) || peak.end.1 > point.1 {
                 peak.end = point;
             } else {
-                if peak.turning_point.1 - peak.start.1 > 50.0 {
+                if peak.turning_point.1 - peak.start.1 > noise_tolerance {
                     result.push(peak);
                 }
                 peak = Peak::default();
@@ -54,4 +59,46 @@ impl Peak {
 
         left + right
     }
+}
+
+pub fn parse_file<'a, P: AsRef<path::Path>>(path: P) -> Vec<(f32, f32)> {
+    let file = std::fs::read_to_string(path).unwrap();
+
+    let sequence = file
+        .split("\n")
+        .filter(|line| !line.is_empty())
+        .filter_map(parse_line)
+        .filter(|coord| 5.0 < coord.0 && coord.0 < 50.0);
+
+    sequence.collect()
+}
+
+fn parse_line(line: &str) -> Option<(f32, f32)> {
+    let mut data = line.split("\t");
+
+    let x_str = data.next();
+    if x_str == None {
+        return None;
+    }
+
+    let x_coord = x_str.unwrap().parse();
+    if let Err(_) = x_coord {
+        return None;
+    }
+
+    let x = x_coord.unwrap();
+
+    let y_str = data.next();
+    if y_str == None {
+        return None;
+    }
+
+    let y_coord = y_str.unwrap().parse();
+    if let Err(_) = y_coord {
+        return None;
+    }
+
+    let y = y_coord.unwrap();
+
+    Some((x, y))
 }
