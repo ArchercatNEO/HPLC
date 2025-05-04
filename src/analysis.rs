@@ -33,6 +33,7 @@ impl Peak {
                     result.push(peak);
                 }
                 peak = Peak::default();
+                peak.start = point;
             }
         }
 
@@ -68,7 +69,7 @@ pub fn parse_file<'a, P: AsRef<path::Path>>(path: P) -> Vec<(f32, f32)> {
         .split("\n")
         .filter(|line| !line.is_empty())
         .filter_map(parse_line)
-        .filter(|coord| 5.0 < coord.0 && coord.0 < 50.0);
+        .filter(|coord| 9.0 < coord.0 && coord.0 < 35.0);
 
     sequence.collect()
 }

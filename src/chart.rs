@@ -27,25 +27,34 @@ impl HplcChart {
     pub fn update(&mut self, _message: Message) {}
 
     pub fn set_chart_data(&mut self, data: Vec<(f32, f32)>) {
-        let truncated = data.into_iter().filter(|(x, _)| 5.0 < *x && *x < 55.0);
+        let truncated = data.into_iter().filter(|(x, _)| 9.0 < *x && *x < 35.0);
 
         self.data = truncated.clone().collect();
 
-        let mut copy1 = truncated.clone();
-        let copy2 = truncated.clone();
+        let mut origin = self.data[0];
+        let mut next = (0.0, 0.0);
+        let mut index = 0;
+        let mut baseline = vec![origin];
+        
+        while index + 1 < self.data.len() {
+            let mut gradient = f32::INFINITY;
+                        
+            for i in index..self.data.len() {
+                let point = &self.data[i];
+                let delta_x = point.0 - origin.0;
+                let delta_y = point.1 - origin.1;
+                let new_gradient = delta_y / delta_x;
+                
+                if new_gradient < gradient {
+                    gradient = new_gradient;
+                    next = point.clone();
+                    index = i;
+                }
+            };
 
-        let origin = copy1.next().unwrap();
-        let gradient = copy1.fold(f32::INFINITY, |accum, point| {
-            let delta_x = point.0 - origin.0;
-            let delta_y = point.1 - origin.1;
-            let gradient = delta_y / delta_x;
-
-            if gradient < accum { gradient } else { accum }
-        });
-
-        let baseline: Vec<(f32, f32)> = copy2
-            .map(|(x, _)| (x.clone(), (x - origin.0) * gradient + origin.1))
-            .collect();
+            baseline.push(next);
+            origin = next;
+        }
 
         self.baseline = baseline;
 
@@ -74,7 +83,7 @@ impl Chart<Message> for HplcChart {
             .margin(10)
             .x_label_area_size(30)
             .y_label_area_size(30)
-            .build_cartesian_2d(5f32..50f32, -2f32..700f32)
+            .build_cartesian_2d(9f32..35f32, -2f32..150f32)
             .expect("failed to build chart");
 
         chart
