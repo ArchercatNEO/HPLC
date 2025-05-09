@@ -1,6 +1,13 @@
 use std::ops::Range;
 
-use iced::{alignment::Horizontal, widget::{button, column, row, slider, text}, Element, Length, Task};
+use iced::mouse::{self, Cursor, Event as MouseEvent};
+use iced::widget::canvas::Event as CanvasEvent;
+use iced::widget::{horizontal_space, scrollable, toggler};
+use iced::{
+    Element, Length, Task,
+    alignment::Horizontal,
+    widget::{button, column, row, slider, text},
+};
 use plotters::prelude::*;
 use plotters_iced::{Chart, ChartBuilder, ChartWidget, DrawingBackend};
 
@@ -10,7 +17,8 @@ use crate::{chromatography::Chromatography, vector::*};
 pub struct App {
     chromatography: Chromatography,
     chart_start: f32,
-    chart_end: f32
+    chart_end: f32,
+    show_unknowns: bool,
 }
 
 impl Default for App {
@@ -18,11 +26,32 @@ impl Default for App {
         let mut app = App {
             chromatography: Chromatography::default(),
             chart_start: 9.0,
-            chart_end: 45.0
+            chart_end: 45.0,
+            show_unknowns: false,
         };
 
         app.chromatography.set_data_range(9.0..45.0);
         app
+    }
+}
+
+pub struct AppState {
+    pub mouse_pressed: bool,
+    pub mouse_x: f32,
+    pub x_offset: f32,
+    pub x_zoom: f32,
+    pub y_zoom: f32,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            mouse_pressed: false,
+            mouse_x: 0.0,
+            x_offset: 0.0,
+            x_zoom: 1.0,
+            y_zoom: 1.0,
+        }
     }
 }
 
@@ -34,18 +63,16 @@ pub enum Message {
     ReferenceFile,
     ReferenceLoad(Vec<(f32, String)>),
     ChartRange(Range<f32>),
-    NoiseReduction(f32)
+    NoiseReduction(f32),
+    ShowUnknowns(bool),
 }
 
 impl App {
     pub fn view(&self) -> Element<Message> {
-        let load_data_file = column![
-            button("Load Raw Data File").on_press(Message::DataFile)
-        ];
+        let load_data_file = column![button("Load Raw Data File").on_press(Message::DataFile)];
 
-        let load_reference_file = column![
-            button("Load Lipid Reference File").on_press(Message::ReferenceFile)
-        ];
+        let load_reference_file =
+            column![button("Load Lipid Reference File").on_press(Message::ReferenceFile)];
 
         let chart_range = {
             let start = slider(0.0..=60.0, self.chart_start, |start| {
@@ -57,13 +84,8 @@ impl App {
                 let clamped = end.max(self.chart_start);
                 Message::ChartRange(self.chart_start..clamped)
             });
-            
-            column![
-                text("Chart Start"),
-                start,
-                text("Chart End"),
-                end
-            ].max_width(200)
+
+            column![text("Chart Start"), start, text("Chart End"), end]
         };
 
         let noise_tolerance = {
@@ -73,31 +95,65 @@ impl App {
             let noise_slider = slider(
                 0.0..=10.0,
                 self.chromatography.noise_reduction,
-                Message::NoiseReduction
+                Message::NoiseReduction,
             );
-        
-            column![label, noise_slider].max_width(200)
+
+            column![label, noise_slider]
+        };
+
+        let unknown_lipid = {
+            let label = text("Show Unknown Lipids");
+            let slide = toggler(self.show_unknowns).on_toggle(Message::ShowUnknowns);
+            row![label, slide]
+        };
+
+        let table = {
+            let header = row![
+                text("Time (s)").align_x(Horizontal::Center),
+                text("Lipid").align_x(Horizontal::Center)
+            ];
+            let mut inner = column![header];
+
+            for peak in &self.chromatography.peaks {
+                let float = peak.turning_point.x();
+                let precision = (float * 100.0).round() / 100.0;
+                let x = text(precision);
+
+                let space = horizontal_space().width(20);
+                if let Some(lipid) = &peak.lipid {
+                    let label = text(lipid);
+                    let row = row![x, space, label];
+                    inner = inner.push(row);
+                } else if self.show_unknowns {
+                    let label = text("Unknown");
+                    let row = row![x, space, label];
+                    inner = inner.push(row);
+                }
+            }
+            scrollable(inner)
         };
 
         let options = column![
             load_data_file,
             load_reference_file,
             chart_range,
-            noise_tolerance
-        ].max_width(200);
+            noise_tolerance,
+            unknown_lipid
+        ]
+        .width(250);
+
+        let footer = row![options, table].height(200);
 
         let chart = ChartWidget::new(self)
             .height(Length::Fill)
             .width(Length::Fill);
 
-        row![options, chart].into()
+        column![chart, footer].into()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Done => {
-                Task::none()
-            }
+            Message::Done => Task::none(),
             Message::DataFile => {
                 let task = rfd::AsyncFileDialog::new()
                     .set_directory("~/src/HPLC")
@@ -109,7 +165,7 @@ impl App {
                         //TODO: display loaded file path
                         let path = handle.path();
                         let data = crate::parse_file(path, crate::parse_line_as_data);
-                        
+
                         Message::DataLoad(data)
                     } else {
                         Message::Done
@@ -118,7 +174,7 @@ impl App {
             }
             Message::DataLoad(data) => {
                 self.chromatography.set_data(data);
-                
+
                 Task::none()
             }
             Message::ReferenceFile => {
@@ -132,7 +188,7 @@ impl App {
                         //TODO: display loaded file path
                         let path = handle.path();
                         let data = crate::parse_file(path, crate::parse_line_as_lipids);
-                        
+
                         Message::ReferenceLoad(data)
                     } else {
                         Message::Done
@@ -156,22 +212,36 @@ impl App {
 
                 Task::none()
             }
+            Message::ShowUnknowns(show) => {
+                self.show_unknowns = show;
+
+                Task::none()
+            }
         }
     }
 }
 
 impl Chart<Message> for App {
-    type State = ();
+    type State = AppState;
 
-    fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {        
+    fn build_chart<DB: DrawingBackend>(&self, state: &Self::State, mut builder: ChartBuilder<DB>) {
         let range = self.chromatography.get_data_range();
+        let scaled_range = {
+            let start = range.start + state.x_offset;
+            let end = range.end + state.x_offset;
+            let middle = (start + end) / 2.0;
+
+            let scaled_start = (start - middle) * state.x_zoom + middle;
+            let scaled_end = (end - middle) * state.x_zoom + middle;
+            scaled_start..scaled_end
+        };
 
         let mut chart = builder
             .caption("HPLC", ("sans-serif", 50).into_font())
             .margin(10)
             .x_label_area_size(40)
             .y_label_area_size(40)
-            .build_cartesian_2d(range, -2f32..150f32)
+            .build_cartesian_2d(scaled_range, -2f32..150f32)
             .expect("failed to build chart");
 
         chart
@@ -187,17 +257,74 @@ impl Chart<Message> for App {
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
 
         chart
-            .draw_series(LineSeries::new(self.chromatography.baseline.clone(), &GREEN))
+            .draw_series(LineSeries::new(
+                self.chromatography.baseline.clone(),
+                &GREEN,
+            ))
             .expect("failed to draw series")
             .label("baseline")
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
 
-        let elements= self.chromatography.peaks.clone();
+        let elements = self.chromatography.peaks.clone();
 
         chart
             .draw_series(elements)
             .expect("failed to draw series")
             .label("data")
             .legend(|(x, y)| Circle::new((x, y), 5, &BLUE));
+    }
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: CanvasEvent,
+        bounds: iced::Rectangle,
+        cursor: Cursor,
+    ) -> (iced::event::Status, Option<Message>) {
+        use iced::event::Status;
+
+        if let CanvasEvent::Mouse(ev) = event {
+            let result = match ev {
+                MouseEvent::ButtonPressed(btn) => match btn {
+                    mouse::Button::Left => {
+                        state.mouse_pressed = true;
+                        (Status::Captured, None)
+                    }
+                    _ => (Status::Ignored, None),
+                },
+                MouseEvent::ButtonReleased(btn) => match btn {
+                    mouse::Button::Left => {
+                        state.mouse_pressed = false;
+                        (Status::Captured, None)
+                    }
+                    _ => (Status::Ignored, None),
+                },
+                MouseEvent::CursorMoved { position } => {
+                    if state.mouse_pressed {
+                        let delta = state.mouse_x - position.x;
+                        state.x_offset = delta * state.x_zoom * 0.1;
+                    } else {
+                        state.mouse_x = position.x;
+                    }
+
+                    (Status::Captured, None)
+                }
+                MouseEvent::WheelScrolled { delta } => {
+                    match delta {
+                        mouse::ScrollDelta::Lines { x: _, y } => {
+                            state.x_zoom *= 1.0 - y * 0.1;
+                            state.y_zoom *= 1.0 - y * 0.1;
+                        }
+                        mouse::ScrollDelta::Pixels { x, y } => {}
+                    }
+                    (Status::Captured, None)
+                }
+                _ => (Status::Ignored, None),
+            };
+
+            return result;
+        }
+
+        (Status::Ignored, None)
     }
 }

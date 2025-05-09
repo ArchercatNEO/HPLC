@@ -14,9 +14,7 @@ fn main() -> Result<(), iced::Error> {
 pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: P, fun: F) -> Vec<U> {
     let file = std::fs::read_to_string(path).unwrap();
 
-    let sequence = file
-        .split("\n")
-        .filter_map(fun);
+    let sequence = file.split("\n").filter_map(fun);
 
     sequence.collect()
 }
@@ -26,7 +24,7 @@ pub fn parse_line_as_lipids(line: &str) -> Option<(f32, String)> {
 
     let x: f32 = {
         let string = data.next();
-        if let Some(number) =  string {
+        if let Some(number) = string {
             if let Ok(float) = number.parse() {
                 float
             } else {

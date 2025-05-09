@@ -18,6 +18,10 @@ impl Vector2 for Point2D {
         (x, y)
     }
 
-    fn x(&self) -> f32 { self.0 }
-    fn y(&self) -> f32 { self.1 }
+    fn x(&self) -> f32 {
+        self.0
+    }
+    fn y(&self) -> f32 {
+        self.1
+    }
 }

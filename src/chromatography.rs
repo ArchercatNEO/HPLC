@@ -7,13 +7,13 @@ use crate::vector::*;
 #[derive(Clone, Debug, Default)]
 pub struct Chromatography {
     data: Vec<Point2D>,
-    
+
     data_range: Option<Range<f32>>,
     pub baseline: Vec<Point2D>,
-    
+
     pub noise_reduction: f32,
     lipid_master_table: Vec<(f32, String)>,
-    pub peaks: Vec<Peak>
+    pub peaks: Vec<Peak>,
 }
 
 impl Chromatography {
@@ -56,21 +56,21 @@ impl Chromatography {
         self.data_range = Some(value);
         self.baseline = self.calculate_baseline();
         self.peaks = self.calculate_peaks();
-        
+
         self
     }
-    
+
     pub fn set_noise_reduction(&mut self, value: f32) -> &mut Self {
         self.noise_reduction = value;
         self.peaks = self.calculate_peaks();
-        
+
         self
     }
-    
+
     pub fn set_lipid_master_table(&mut self, value: Vec<(f32, String)>) -> &mut Self {
         self.lipid_master_table = value;
         self.peaks = self.calculate_peaks();
-        
+
         self
     }
 
@@ -79,13 +79,13 @@ impl Chromatography {
         if data.len() == 0 {
             return vec![];
         }
-        
+
         let mut index = 1;
-        
+
         let mut origin = &data[0];
         let mut next = &Point2D::default();
         let mut baseline = vec![data[0].clone()];
-        
+
         while index + 1 < data.len() {
             let mut best_gradient = f32::INFINITY;
             for i in index..data.len() {
@@ -151,4 +151,3 @@ impl Chromatography {
         result
     }
 }
-
