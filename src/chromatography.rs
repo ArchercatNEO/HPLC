@@ -60,6 +60,22 @@ impl Chromatography {
         self
     }
 
+    pub fn get_highest_point(&self) -> f32 {
+        let data = self.get_data();
+        if data.len() == 0 {
+            return 0.0;
+        }
+
+        let mut highest = 0.0;
+        for point in data {
+            if point.y() > highest {
+                highest = point.y();
+            }
+        }
+
+        highest
+    }
+
     pub fn set_noise_reduction(&mut self, value: f32) -> &mut Self {
         self.noise_reduction = value;
         self.peaks = self.calculate_peaks();

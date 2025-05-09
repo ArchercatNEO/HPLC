@@ -26,7 +26,7 @@ impl Default for App {
         let mut app = App {
             chromatography: Chromatography::default(),
             chart_start: 9.0,
-            chart_end: 45.0,
+            chart_end: 34.5,
             show_unknowns: false,
         };
 
@@ -37,8 +37,12 @@ impl Default for App {
 
 pub struct AppState {
     pub mouse_pressed: bool,
+    pub horizontal: bool,
+    pub vertical: bool,
     pub mouse_x: f32,
+    pub mouse_y: f32,
     pub x_offset: f32,
+    pub y_offset: f32,
     pub x_zoom: f32,
     pub y_zoom: f32,
 }
@@ -47,8 +51,12 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             mouse_pressed: false,
+            horizontal: true,
+            vertical: true,
             mouse_x: 0.0,
+            mouse_y: 0.0,
             x_offset: 0.0,
+            y_offset: 0.0,
             x_zoom: 1.0,
             y_zoom: 1.0,
         }
@@ -96,7 +104,8 @@ impl App {
                 0.0..=10.0,
                 self.chromatography.noise_reduction,
                 Message::NoiseReduction,
-            );
+            )
+            .step(0.1);
 
             column![label, noise_slider]
         };
@@ -226,7 +235,7 @@ impl Chart<Message> for App {
 
     fn build_chart<DB: DrawingBackend>(&self, state: &Self::State, mut builder: ChartBuilder<DB>) {
         let range = self.chromatography.get_data_range();
-        let scaled_range = {
+        let scaled_x_range = {
             let start = range.start + state.x_offset;
             let end = range.end + state.x_offset;
             let middle = (start + end) / 2.0;
@@ -236,12 +245,23 @@ impl Chart<Message> for App {
             scaled_start..scaled_end
         };
 
+        let scaled_y_range = {
+            let min = state.y_offset;
+            let max = self.chromatography.get_highest_point() + state.y_offset;
+            let middle = (min + max) / 2.0;
+
+            let scaled_min = (min - middle) * state.y_zoom + middle;
+            let scaled_max = (max - middle) * state.y_zoom + middle;
+
+            scaled_min..scaled_max
+        };
+
         let mut chart = builder
             .caption("HPLC", ("sans-serif", 50).into_font())
             .margin(10)
             .x_label_area_size(40)
             .y_label_area_size(40)
-            .build_cartesian_2d(scaled_range, -2f32..150f32)
+            .build_cartesian_2d(scaled_x_range, scaled_y_range)
             .expect("failed to build chart");
 
         chart
@@ -278,10 +298,11 @@ impl Chart<Message> for App {
         &self,
         state: &mut Self::State,
         event: CanvasEvent,
-        bounds: iced::Rectangle,
-        cursor: Cursor,
+        _bounds: iced::Rectangle,
+        _cursor: Cursor,
     ) -> (iced::event::Status, Option<Message>) {
         use iced::event::Status;
+        use iced::keyboard::Event as KeyboardEvent;
 
         if let CanvasEvent::Mouse(ev) = event {
             let result = match ev {
@@ -301,22 +322,47 @@ impl Chart<Message> for App {
                 },
                 MouseEvent::CursorMoved { position } => {
                     if state.mouse_pressed {
-                        let delta = state.mouse_x - position.x;
-                        state.x_offset = delta * state.x_zoom * 0.1;
-                    } else {
-                        state.mouse_x = position.x;
+                        if state.horizontal {
+                            let delta_x = position.x - state.mouse_x;
+                            state.x_offset -= delta_x * state.x_zoom * 0.1;
+                        }
+
+                        if state.vertical {
+                            let delta_y = position.y - state.mouse_y;
+                            state.y_offset += delta_y + state.y_zoom * 0.01;
+                        }
                     }
 
+                    state.mouse_x = position.x;
+                    state.mouse_y = position.y;
                     (Status::Captured, None)
                 }
                 MouseEvent::WheelScrolled { delta } => {
                     match delta {
                         mouse::ScrollDelta::Lines { x: _, y } => {
-                            state.x_zoom *= 1.0 - y * 0.1;
-                            state.y_zoom *= 1.0 - y * 0.1;
+                            if state.horizontal {
+                                state.x_zoom *= 1.0 - y * 0.1;
+                            }
+
+                            if state.vertical {
+                                state.y_zoom *= 1.0 - y * 0.1;
+                            }
                         }
-                        mouse::ScrollDelta::Pixels { x, y } => {}
+                        mouse::ScrollDelta::Pixels { x: _, y: _ } => {}
                     }
+                    (Status::Captured, None)
+                }
+                _ => (Status::Ignored, None),
+            };
+
+            return result;
+        }
+
+        if let CanvasEvent::Keyboard(keyboard) = event {
+            let result = match keyboard {
+                KeyboardEvent::ModifiersChanged(mods) => {
+                    state.horizontal = !mods.control();
+                    state.vertical = !mods.alt();
                     (Status::Captured, None)
                 }
                 _ => (Status::Ignored, None),
