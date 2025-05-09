@@ -17,18 +17,14 @@ pub struct Chromatography {
 }
 
 impl Chromatography {
-    fn clamp_vec(data: &[Point2D], range: &Option<Range<f32>>) -> Vec<Point2D> {
-        if let Some(range) = range {
-            let cloned = data.to_vec().into_iter();
-            let filtered = cloned.filter(|point| range.contains(&point.x()));
+    pub fn get_data(&self) -> Vec<Point2D> {
+        if let Some(range) = &self.data_range {
+            let cloned = self.data.to_vec().into_iter();
+            let filtered = cloned.filter(|point| range.start < point.x() && point.x() < range.end);
             filtered.collect()
         } else {
-            data.to_vec()
+            self.data.to_vec()
         }
-    }
-
-    pub fn get_data(&self) -> Vec<Point2D> {
-        Self::clamp_vec(&self.data, &self.data_range)
     }
 
     pub fn set_data(&mut self, value: Vec<Point2D>) -> &mut Self {
@@ -105,7 +101,7 @@ impl Chromatography {
         while index + 1 < data.len() {
             let mut best_gradient = f32::INFINITY;
             for i in index..data.len() {
-                let point = &self.data[i];
+                let point = &data[i];
 
                 let gradient = origin.gradient(point);
                 if gradient < best_gradient {
@@ -133,11 +129,28 @@ impl Chromatography {
         let mut lipids = self.lipid_master_table.iter();
         let mut lipid = lipids.next();
 
+        let mut baseline = self.baseline.iter();
+        let mut baseline_start = baseline.next().unwrap();
+        let mut baseline_end = baseline.next().unwrap();
+
+        let mut gradient = baseline_start.gradient(baseline_end);
+        let mut offset = baseline_start.y() - gradient * baseline_start.x();
+
         let mut peak = Peak::default();
         for point in data.iter() {
             if peak.start == Point2D::default() {
                 peak.start = point.clone();
                 continue;
+            }
+
+            if baseline_end.x() < point.x() {
+                if let Some(next) = baseline.next() {
+                    baseline_start = baseline_end;
+                    baseline_end = next;
+
+                    gradient = baseline_start.gradient(baseline_end);
+                    offset = baseline_start.y() - gradient * baseline_start.x();
+                }
             }
 
             if peak.turning_point.y() < point.y() {
@@ -155,12 +168,14 @@ impl Chromatography {
             if peak.end == Point2D::default() || peak.end.y() > point.y() {
                 peak.end = point.clone();
             } else {
+                let end = peak.end.clone();
                 if peak.turning_point.y() - peak.start.y() > self.noise_reduction {
+                    peak.area(gradient, offset);
                     result.push(peak);
                 }
 
                 peak = Peak::default();
-                peak.start = point.clone();
+                peak.start = end;
             }
         }
 

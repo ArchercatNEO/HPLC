@@ -11,6 +11,11 @@ fn main() -> Result<(), iced::Error> {
     iced::run("HPLC", app::App::update, app::App::view)
 }
 
+pub fn round_to_precision(value: f32, decimals: i32) -> f32 {
+    let power = 10.0f32.powi(decimals);
+    (value * power).round() / power
+}
+
 pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: P, fun: F) -> Vec<U> {
     let file = std::fs::read_to_string(path).unwrap();
 

@@ -1,8 +1,9 @@
 use std::ops::Range;
 
+use iced::alignment::Vertical;
 use iced::mouse::{self, Cursor, Event as MouseEvent};
 use iced::widget::canvas::Event as CanvasEvent;
-use iced::widget::{horizontal_space, scrollable, toggler};
+use iced::widget::{scrollable, toggler};
 use iced::{
     Element, Length, Task,
     alignment::Horizontal,
@@ -30,7 +31,8 @@ impl Default for App {
             show_unknowns: false,
         };
 
-        app.chromatography.set_data_range(9.0..45.0);
+        app.chromatography
+            .set_data_range(app.chart_start..app.chart_end);
         app
     }
 }
@@ -118,24 +120,28 @@ impl App {
 
         let table = {
             let header = row![
-                text("Time (s)").align_x(Horizontal::Center),
-                text("Lipid").align_x(Horizontal::Center)
+                text("Time (s)").center().width(80),
+                text("Lipid").center().width(200),
+                text("Area (m^2)").center().width(150)
             ];
             let mut inner = column![header];
 
             for peak in &self.chromatography.peaks {
-                let float = peak.turning_point.x();
-                let precision = (float * 100.0).round() / 100.0;
-                let x = text(precision);
+                let time = crate::round_to_precision(peak.turning_point.x(), 2);
+                let time_label = text(time).center().width(80);
+                let area = crate::round_to_precision(peak.area, 2);
+                let area_label = text(area).center().width(150);
 
-                let space = horizontal_space().width(20);
-                if let Some(lipid) = &peak.lipid {
-                    let label = text(lipid);
-                    let row = row![x, space, label];
-                    inner = inner.push(row);
-                } else if self.show_unknowns {
-                    let label = text("Unknown");
-                    let row = row![x, space, label];
+                let label = if let Some(lipid) = &peak.lipid {
+                    text(lipid).center().width(200)
+                } else {
+                    text("Unknown").center().width(200)
+                };
+
+                if self.show_unknowns || peak.lipid != None {
+                    let row = row![time_label, label, area_label]
+                        .spacing(20)
+                        .align_y(Vertical::Center);
                     inner = inner.push(row);
                 }
             }

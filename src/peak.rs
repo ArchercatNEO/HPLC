@@ -10,17 +10,20 @@ pub struct Peak {
     pub start: Point2D,
     pub turning_point: Point2D,
     pub end: Point2D,
+    pub area: f32,
     pub lipid: Option<String>,
 }
 
 impl Peak {
     // area of trapezium = 1/2 * (a + b) * h
-    pub fn area(&self, start_basline: f32, end_baseline: f32) -> f32 {
-        let midpoint_baseline = (start_basline + end_baseline) / 2.0;
+    pub fn area(&mut self, gradient: f32, offset: f32) {
+        let start_baseline = self.start.x() * gradient + offset;
+        let midpoint_baseline = self.turning_point.x() * gradient + offset;
+        let end_baseline = self.end.x() * gradient + offset;
 
         let left = {
             let height = self.turning_point.x() - self.start.x();
-            let a = self.start.y() - start_basline;
+            let a = self.start.y() - start_baseline;
             let b = self.turning_point.y() - midpoint_baseline;
             0.5 * (a + b) * height
         };
@@ -28,11 +31,17 @@ impl Peak {
         let right = {
             let height = self.end.x() - self.turning_point.x();
             let a = self.turning_point.y() - midpoint_baseline;
-            let b = self.start.y() - end_baseline;
+            let b = self.end.y() - end_baseline;
             0.5 * (a + b) * height
         };
 
-        left + right
+        self.area = left + right;
+        if self.area < 0.0 {
+            println!(
+                "start: {}, mid: {}, end: {}",
+                start_baseline, midpoint_baseline, end_baseline
+            );
+        }
     }
 }
 
