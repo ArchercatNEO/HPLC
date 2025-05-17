@@ -173,7 +173,7 @@ impl Chromatography {
             } else {
                 let end = peak.end.clone();
                 peak.area -= (peak.end.y() - gradient * peak.end.x() - offset) / 2.0;
-                peak.area *= peak.end.x() - peak.start.x();
+                peak.area *= point.x() - peak.end.x();
 
                 if peak.turning_point.y() - peak.start.y() > self.noise_reduction {
                     result.push(peak);

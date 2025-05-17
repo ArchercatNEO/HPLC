@@ -43,7 +43,7 @@ pub fn parse_line_as_lipids(line: &str) -> Option<(f32, String)> {
     let lipid = {
         let string = data.next();
         if let Some(name) = string {
-            name
+            name.trim()
         } else {
             return None;
         }

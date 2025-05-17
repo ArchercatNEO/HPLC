@@ -1,4 +1,6 @@
+use std::fs;
 use std::ops::Range;
+use std::path::PathBuf;
 
 use iced::alignment::Vertical;
 use iced::mouse::{self, Cursor, Event as MouseEvent};
@@ -72,6 +74,8 @@ pub enum Message {
     DataLoad(Vec<Point2D>),
     ReferenceFile,
     ReferenceLoad(Vec<(f32, String)>),
+    ExportFile,
+    ExportFileContent(PathBuf),
     ChartRange(Range<f32>),
     NoiseReduction(f32),
     ShowUnknowns(bool),
@@ -79,10 +83,12 @@ pub enum Message {
 
 impl App {
     pub fn view(&self) -> Element<Message> {
-        let load_data_file = column![button("Load Raw Data File").on_press(Message::DataFile)];
+        let load_data_file = button("Load Raw Data File").on_press(Message::DataFile);
 
         let load_reference_file =
-            column![button("Load Lipid Reference File").on_press(Message::ReferenceFile)];
+            button("Load Lipid Reference File").on_press(Message::ReferenceFile);
+
+        let export_file = button("Export Table").on_press(Message::ExportFile);
 
         let chart_range = {
             let start = slider(0.0..=60.0, self.chart_start, |start| {
@@ -118,6 +124,16 @@ impl App {
             row![label, slide]
         };
 
+        let options = column![
+            load_data_file,
+            load_reference_file,
+            export_file,
+            chart_range,
+            noise_tolerance,
+            unknown_lipid
+        ]
+        .width(250);
+
         let table = {
             let header = row![
                 text("Time (s)").center().width(80),
@@ -149,16 +165,7 @@ impl App {
             scrollable(inner)
         };
 
-        let options = column![
-            load_data_file,
-            load_reference_file,
-            chart_range,
-            noise_tolerance,
-            unknown_lipid
-        ]
-        .width(250);
-
-        let footer = row![options, table].height(200);
+        let footer = row![options, table].height(250);
 
         let chart = ChartWidget::new(self)
             .height(Length::Fill)
@@ -194,7 +201,6 @@ impl App {
             }
             Message::ReferenceFile => {
                 let task = rfd::AsyncFileDialog::new()
-                    .set_directory("~/src/HPLC")
                     .add_filter("text", &["tsv"])
                     .pick_file();
 
@@ -212,6 +218,37 @@ impl App {
             }
             Message::ReferenceLoad(data) => {
                 self.chromatography.set_lipid_master_table(data);
+
+                Task::none()
+            }
+            Message::ExportFile => {
+                let task = rfd::AsyncFileDialog::new()
+                    .set_file_name("table.arw")
+                    .save_file();
+
+                Task::perform(task, |maybe_handle| {
+                    if let Some(handle) = maybe_handle {
+                        let path = handle.path().to_owned();
+                        Message::ExportFileContent(path)
+                    } else {
+                        Message::Done
+                    }
+                })
+            }
+            Message::ExportFileContent(path) => {
+                let content = self
+                    .chromatography
+                    .peaks
+                    .iter()
+                    .map(|peak| {
+                        let label = peak.lipid.clone().unwrap_or("Unknown".to_string());
+                        format!("{}\t{}\t{}\n", label, peak.area, peak.turning_point.x())
+                    })
+                    .fold(
+                        "lipid\tarea\tturning point\n".to_string(),
+                        |accum: String, peak| accum + &peak,
+                    );
+                fs::write(path, content).expect("Cannot write there");
 
                 Task::none()
             }
