@@ -19,22 +19,24 @@ pub fn round_to_precision(value: f32, decimals: i32) -> f32 {
 pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: P, fun: F) -> Vec<U> {
     let mut file = std::fs::File::open(path).unwrap();
     let size = file.metadata().unwrap().size();
-    let mut buffer: Vec<u8> = Vec::with_capacity(size.try_into().unwrap());
-    let result = file.read_to_end(&mut buffer);
-    
+    let mut buffer: Vec<u8> = vec![0; size.try_into().unwrap()];
+    let result = file.read(&mut buffer);
+
     match result {
-        Ok(read) => {
-            println!("read {} bytes", read);
+        Ok(_) => {
             let content = String::from_utf8(buffer);
-            match content {
+            let ret = match content {
                 Ok(data) => {
+                    println!("file content {}", data);
                     data.lines().filter_map(fun).collect()
-                }
+                },
                 Err(err) => {
                     println!("convert to string err {}", err);
                     vec![]
                 }
-            }
+            };
+            println!("read {} bytes", size);
+            ret
         }
         Err(err) => {
             println!("failed {}", err);
@@ -44,8 +46,6 @@ pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: P, fu
 }
 
 pub fn parse_line_as_lipids(line: &str) -> Option<(f32, String)> {
-    println!("{}", line);
-
     let mut data = if line.contains("\t") {
         line.split("\t")
     } else {
@@ -78,8 +78,6 @@ pub fn parse_line_as_lipids(line: &str) -> Option<(f32, String)> {
 }
 
 pub fn parse_line_as_data(line: &str) -> Option<Point2D> {
-    println!("{}", line);
-
     let mut data = if line.contains("\t") {
         line.split("\t")
     } else {

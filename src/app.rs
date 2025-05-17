@@ -22,6 +22,8 @@ pub struct App {
     chart_start: f32,
     chart_end: f32,
     show_unknowns: bool,
+    zoom_x: f32,
+    zoom_y: f32
 }
 
 impl Default for App {
@@ -31,6 +33,8 @@ impl Default for App {
             chart_start: 9.0,
             chart_end: 34.5,
             show_unknowns: false,
+            zoom_x: 0.0,
+            zoom_y: 0.0
         };
 
         app.chromatography
@@ -40,6 +44,7 @@ impl Default for App {
 }
 
 pub struct AppState {
+    pub mouse_inside: bool,
     pub mouse_pressed: bool,
     pub horizontal: bool,
     pub vertical: bool,
@@ -54,6 +59,7 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self {
+            mouse_inside: false,
             mouse_pressed: false,
             horizontal: true,
             vertical: true,
@@ -79,6 +85,8 @@ pub enum Message {
     ChartRange(Range<f32>),
     NoiseReduction(f32),
     ShowUnknowns(bool),
+    ZoomX(f32),
+    ZoomY(f32),
 }
 
 impl App {
@@ -101,7 +109,9 @@ impl App {
                 Message::ChartRange(self.chart_start..clamped)
             });
 
-            column![text("Chart Start"), start, text("Chart End"), end]
+            let label_start = format!("Chart Start: {}", self.chart_start);
+            let label_end = format!("Chart End: {}", self.chart_end);
+            column![text(label_start), start, text(label_end), end]
         };
 
         let noise_tolerance = {
@@ -134,6 +144,20 @@ impl App {
         ]
         .width(250);
 
+        let zoom_x = slider(0.0..=100.0, self.zoom_x, Message::ZoomX);
+        let zoom_x_content = format!("X Zoom: {}%", f32::powf(1.1, self.zoom_x) * 100.0);
+        let zoom_x_label = text(zoom_x_content);
+        let zoom_y = slider(0.0..=100.0, self.zoom_y, Message::ZoomY);
+        let zoom_y_content = format!("Y Zoom: {}%", f32::powf(1.1, self.zoom_y) * 100.0);
+        let zoom_y_label = text(zoom_y_content);
+
+        let options2 = column![
+            zoom_x_label,
+            zoom_x,
+            zoom_y_label,
+            zoom_y
+        ].width(250);
+
         let table = {
             let header = row![
                 text("Time (s)").center().width(80),
@@ -165,7 +189,7 @@ impl App {
             scrollable(inner)
         };
 
-        let footer = row![options, table].height(250);
+        let footer = row![options, options2, table].height(250);
 
         let chart = ChartWidget::new(self)
             .height(Length::Fill)
@@ -271,6 +295,16 @@ impl App {
 
                 Task::none()
             }
+            Message::ZoomX(zoom) => { 
+                self.zoom_x = zoom;
+                
+                Task::none()
+            }
+            Message::ZoomY(zoom) => { 
+                self.zoom_y = zoom;
+
+                Task::none()
+            }
         }
     }
 }
@@ -285,8 +319,9 @@ impl Chart<Message> for App {
             let end = range.end + state.x_offset;
             let middle = (start + end) / 2.0;
 
-            let scaled_start = (start - middle) * state.x_zoom + middle;
-            let scaled_end = (end - middle) * state.x_zoom + middle;
+            let power = f32::powf(1.1, -self.zoom_x);
+            let scaled_start = (start - middle) * state.x_zoom * power + middle;
+            let scaled_end = (end - middle) * state.x_zoom * power + middle;
             scaled_start..scaled_end
         };
 
@@ -295,8 +330,9 @@ impl Chart<Message> for App {
             let max = self.chromatography.get_highest_point() + state.y_offset;
             let middle = (min + max) / 2.0;
 
-            let scaled_min = (min - middle) * state.y_zoom + middle;
-            let scaled_max = (max - middle) * state.y_zoom + middle;
+            let power = f32::powf(1.1, -self.zoom_y);
+            let scaled_min = (min - middle) * state.y_zoom * power + middle;
+            let scaled_max = (max - middle) * state.y_zoom * power + middle;
 
             scaled_min..scaled_max
         };
@@ -353,7 +389,7 @@ impl Chart<Message> for App {
             let result = match ev {
                 MouseEvent::ButtonPressed(btn) => match btn {
                     mouse::Button::Left => {
-                        state.mouse_pressed = true;
+                        state.mouse_pressed = state.mouse_inside;
                         (Status::Captured, None)
                     }
                     _ => (Status::Ignored, None),
@@ -366,38 +402,41 @@ impl Chart<Message> for App {
                     _ => (Status::Ignored, None),
                 },
                 MouseEvent::CursorMoved { position } => {
-                    if state.mouse_pressed {
+                    if state.mouse_pressed && state.mouse_inside {
                         if state.horizontal {
                             let delta_x = position.x - state.mouse_x;
-                            state.x_offset -= delta_x * state.x_zoom * 0.1;
+                            state.x_offset -= delta_x * state.x_zoom * 0.05;
                         }
 
                         if state.vertical {
                             let delta_y = position.y - state.mouse_y;
-                            state.y_offset += delta_y + state.y_zoom * 0.01;
+                            state.y_offset += delta_y + state.y_zoom * 0.05;
                         }
                     }
 
                     state.mouse_x = position.x;
                     state.mouse_y = position.y;
+                    state.mouse_inside = _bounds.contains(position);
                     (Status::Captured, None)
                 }
                 MouseEvent::WheelScrolled { delta } => {
-                    match delta {
-                        mouse::ScrollDelta::Lines { x: _, y } => {
-                            if state.horizontal {
-                                state.x_zoom *= 1.0 - y * 0.1;
+                    if state.mouse_inside {
+                        match delta {
+                            mouse::ScrollDelta::Lines { x: _, y } => {
+                                if state.horizontal {
+                                    state.x_zoom *= 1.0 - y * 0.1;
+                                }
+    
+                                if state.vertical {
+                                    state.y_zoom *= 1.0 - y * 0.1;
+                                }
                             }
-
-                            if state.vertical {
-                                state.y_zoom *= 1.0 - y * 0.1;
-                            }
+                            mouse::ScrollDelta::Pixels { x: _, y: _ } => {}
                         }
-                        mouse::ScrollDelta::Pixels { x: _, y: _ } => {}
                     }
                     (Status::Captured, None)
                 }
-                _ => (Status::Ignored, None),
+                _ => (Status::Ignored, None)
             };
 
             return result;
