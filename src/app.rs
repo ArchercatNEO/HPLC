@@ -179,7 +179,8 @@ impl App {
             Message::Done => Task::none(),
             Message::DataFile => {
                 let task = rfd::AsyncFileDialog::new()
-                    .add_filter("text", &["tsv"])
+                    .add_filter("any", &["*"])
+                    .add_filter("text", &["arw", "csv", "tsv", "txt"])
                     .pick_file();
 
                 Task::perform(task, |maybe_handle| {
@@ -201,7 +202,8 @@ impl App {
             }
             Message::ReferenceFile => {
                 let task = rfd::AsyncFileDialog::new()
-                    .add_filter("text", &["tsv"])
+                    .add_filter("any", &["*"])
+                    .add_filter("text", &["arw", "csv", "tsv", "txt"])
                     .pick_file();
 
                 Task::perform(task, |maybe_handle| {

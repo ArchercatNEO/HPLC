@@ -25,7 +25,11 @@ pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: P, fu
 }
 
 pub fn parse_line_as_lipids(line: &str) -> Option<(f32, String)> {
-    let mut data = line.split("\t");
+    let mut data = if line.contains("\t") {
+        line.split("\t")
+    } else {
+        line.split(",")
+    };
 
     let x: f32 = {
         let string = data.next();
@@ -53,31 +57,37 @@ pub fn parse_line_as_lipids(line: &str) -> Option<(f32, String)> {
 }
 
 pub fn parse_line_as_data(line: &str) -> Option<Point2D> {
-    let mut data = line.split("\t");
+    let mut data = if line.contains("\t") {
+        line.split("\t")
+    } else {
+        line.split(",")
+    };
 
-    let x_str = data.next();
-    if x_str == None {
-        return None;
-    }
+    let x: f32 = {
+        let string = data.next();
+        if let Some(number) = string {
+            if let Ok(float) = number.parse() {
+                float
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    };
 
-    let x_coord = x_str.unwrap().parse();
-    if let Err(_) = x_coord {
-        return None;
-    }
-
-    let x = x_coord.unwrap();
-
-    let y_str = data.next();
-    if y_str == None {
-        return None;
-    }
-
-    let y_coord = y_str.unwrap().parse();
-    if let Err(_) = y_coord {
-        return None;
-    }
-
-    let y = y_coord.unwrap();
+    let y: f32 = {
+        let string = data.next();
+        if let Some(number) = string {
+            if let Ok(float) = number.parse() {
+                float
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    };
 
     Some(Point2D::new(x, y))
 }
