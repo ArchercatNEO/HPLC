@@ -123,7 +123,8 @@ impl App {
                 text("Time (s)").center().width(80),
                 text("Lipid").center().width(200),
                 text("Area (m^2)").center().width(150)
-            ];
+            ]
+            .spacing(20);
             let mut inner = column![header];
 
             for peak in &self.chromatography.peaks {
@@ -171,7 +172,6 @@ impl App {
             Message::Done => Task::none(),
             Message::DataFile => {
                 let task = rfd::AsyncFileDialog::new()
-                    .set_directory("~/src/HPLC")
                     .add_filter("text", &["tsv"])
                     .pick_file();
 

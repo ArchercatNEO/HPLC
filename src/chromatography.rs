@@ -140,6 +140,7 @@ impl Chromatography {
         for point in data.iter() {
             if peak.start == Point2D::default() {
                 peak.start = point.clone();
+                peak.area += (point.y() - gradient * baseline_start.x() - offset) / 2.0;
                 continue;
             }
 
@@ -155,6 +156,7 @@ impl Chromatography {
 
             if peak.turning_point.y() < point.y() {
                 peak.turning_point = point.clone();
+                peak.area += point.y() - gradient * point.x() - offset;
                 continue;
             } else if peak.lipid == None {
                 if let Some((x, name)) = lipid {
@@ -167,10 +169,13 @@ impl Chromatography {
 
             if peak.end == Point2D::default() || peak.end.y() > point.y() {
                 peak.end = point.clone();
+                peak.area += point.y() - (gradient * point.x() + offset);
             } else {
                 let end = peak.end.clone();
+                peak.area -= (peak.end.y() - gradient * peak.end.x() - offset) / 2.0;
+                peak.area *= peak.end.x() - peak.start.x();
+
                 if peak.turning_point.y() - peak.start.y() > self.noise_reduction {
-                    peak.area(gradient, offset);
                     result.push(peak);
                 }
 
