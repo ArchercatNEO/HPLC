@@ -1,4 +1,4 @@
-use std::path;
+use std::{io::Read, os::unix::fs::MetadataExt, path};
 
 use vector::*;
 
@@ -17,18 +17,35 @@ pub fn round_to_precision(value: f32, decimals: i32) -> f32 {
 }
 
 pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: P, fun: F) -> Vec<U> {
-    let file = std::fs::read_to_string(path).unwrap();
-
-    println!("{}", file);
-
-    let sequence = file.lines().filter_map(fun);
-
-    sequence.collect()
+    let mut file = std::fs::File::open(path).unwrap();
+    let size = file.metadata().unwrap().size();
+    let mut buffer: Vec<u8> = Vec::with_capacity(size.try_into().unwrap());
+    let result = file.read_to_end(&mut buffer);
+    
+    match result {
+        Ok(read) => {
+            println!("read {} bytes", read);
+            let content = String::from_utf8(buffer);
+            match content {
+                Ok(data) => {
+                    data.lines().filter_map(fun).collect()
+                }
+                Err(err) => {
+                    println!("convert to string err {}", err);
+                    vec![]
+                }
+            }
+        }
+        Err(err) => {
+            println!("failed {}", err);
+            vec![]
+        }
+    }
 }
 
 pub fn parse_line_as_lipids(line: &str) -> Option<(f32, String)> {
     println!("{}", line);
-    
+
     let mut data = if line.contains("\t") {
         line.split("\t")
     } else {
