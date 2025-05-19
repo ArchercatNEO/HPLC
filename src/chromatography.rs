@@ -1,6 +1,8 @@
 use std::iter::Iterator;
 use std::ops::Range;
 
+use iced::Point;
+
 use crate::peak::Peak;
 use crate::vector::*;
 
@@ -11,12 +13,31 @@ pub struct Chromatography {
     data_range: Option<Range<f32>>,
     pub baseline: Vec<Point2D>,
 
-    pub noise_reduction: f32,
     lipid_master_table: Vec<(f32, String)>,
+    include_unknowns: bool,
+    noise_reduction: f32,
     pub peaks: Vec<Peak>,
+
+    //whyyyyyyyyyyyyyyyyyy
+    //TODO: how can we not put data that is only for rendering here?
+    pub global_zoom: Point,
 }
 
 impl Chromatography {
+    pub fn into_table(&self) -> String {
+        self.peaks
+            .iter()
+            .filter(|peak| self.include_unknowns || peak.lipid != None)
+            .map(|peak| {
+                let entry = peak.lipid.clone().unwrap_or("Unknown".to_string());
+                format!("{},{},{}\n", entry, peak.turning_point.x(), peak.area)
+            })
+            .fold(
+                "Lipid,Retention Time (s),Area\n".to_string(),
+                |accum, entry| accum + &entry,
+            )
+    }
+
     pub fn get_data(&self) -> Vec<Point2D> {
         if let Some(range) = &self.data_range {
             let cloned = self.data.to_vec().into_iter();
@@ -72,15 +93,22 @@ impl Chromatography {
         highest
     }
 
-    pub fn set_noise_reduction(&mut self, value: f32) -> &mut Self {
-        self.noise_reduction = value;
+    pub fn set_lipid_master_table(&mut self, value: Vec<(f32, String)>) -> &mut Self {
+        self.lipid_master_table = value;
         self.peaks = self.calculate_peaks();
 
         self
     }
 
-    pub fn set_lipid_master_table(&mut self, value: Vec<(f32, String)>) -> &mut Self {
-        self.lipid_master_table = value;
+    pub fn set_include_unknowns(&mut self, show: bool) -> &mut Self {
+        self.include_unknowns = show;
+        self.peaks = self.calculate_peaks();
+
+        self
+    }
+
+    pub fn set_noise_reduction(&mut self, value: f32) -> &mut Self {
+        self.noise_reduction = value;
         self.peaks = self.calculate_peaks();
 
         self

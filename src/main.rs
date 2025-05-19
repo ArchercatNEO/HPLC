@@ -3,6 +3,7 @@ use std::{io::Read, os::unix::fs::MetadataExt, path};
 use vector::*;
 
 mod app;
+mod chromatogram;
 mod chromatography;
 mod peak;
 mod vector;
@@ -29,7 +30,7 @@ pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: P, fu
                 Ok(data) => {
                     println!("file content {}", data);
                     data.lines().filter_map(fun).collect()
-                },
+                }
                 Err(err) => {
                     println!("convert to string err {}", err);
                     vec![]
