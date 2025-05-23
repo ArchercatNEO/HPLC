@@ -2,13 +2,10 @@ use std::fs;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use iced::Point;
-use iced::alignment::Vertical;
-use iced::widget::{scrollable, toggler};
 use iced::{
-    Element, Length, Task,
+    Element, Length, Point, Task,
     alignment::Horizontal,
-    widget::{button, column, row, slider, text},
+    widget::{button, column, row, scrollable, slider, text, toggler},
 };
 use plotters_iced::ChartWidget;
 
@@ -22,6 +19,7 @@ pub struct App {
     chart_start: f32,
     chart_end: f32,
     noise_reduction: f32,
+    horizontal_deviation: f32,
     include_unknowns: bool,
     global_zoom: Point,
 }
@@ -35,6 +33,7 @@ impl Default for App {
             chart_start: 9.0,
             chart_end: 34.5,
             noise_reduction: 0.3,
+            horizontal_deviation: 0.5,
             include_unknowns: false,
             global_zoom: Point::new(0.0, 0.0),
         }
@@ -52,6 +51,7 @@ pub enum Message {
     ExportFileContent(PathBuf),
     ChartRange(Range<f32>),
     NoiseReduction(f32),
+    HorizontalDeviation(f32),
     ShowUnknowns(bool),
     ZoomX(f32),
     ZoomY(f32),
@@ -90,7 +90,7 @@ impl App {
         };
 
         let noise_tolerance = {
-            let display = format!("Noise Tolerance: {}", self.noise_reduction);
+            let display = format!("Noise Reduction: {}", self.noise_reduction);
             let label = text(display).align_x(Horizontal::Center);
 
             let noise_slider =
@@ -99,10 +99,24 @@ impl App {
             column![label, noise_slider]
         };
 
+        let horizontal_deviation = {
+            let display = format!("Horizontal Deviation: {}", self.horizontal_deviation);
+            let label = text(display).align_x(Horizontal::Center);
+
+            let noise_slider = slider(
+                0.0..=10.0,
+                self.horizontal_deviation,
+                Message::HorizontalDeviation,
+            )
+            .step(0.1);
+
+            column![label, noise_slider]
+        };
+
         let unknown_lipid = {
-            let label = text("Show Unknown Lipids");
+            let label = text("Show Unknown Lipids").align_x(Horizontal::Center);
             let slide = toggler(self.include_unknowns).on_toggle(Message::ShowUnknowns);
-            row![label, slide]
+            column![label, slide]
         };
 
         let options = column![
@@ -111,6 +125,7 @@ impl App {
             export_file,
             chart_range,
             noise_tolerance,
+            horizontal_deviation,
             unknown_lipid
         ]
         .width(250);
@@ -133,11 +148,11 @@ impl App {
                     let button = button(label).on_press(Message::TabSwitch(i));
                     buttons = buttons.push(button);
                 }
-                buttons
+                scrollable(buttons)
             };
 
             let sample = &self.samples[handle];
-            let table = self.sample_to_table(sample);
+            let table = sample.into_table_element().map(Message::from);
 
             let footer = row![options, options2, table].height(250);
             let chart: Element<()> = ChartWidget::new(sample.clone())
@@ -183,7 +198,9 @@ impl App {
                     sample.set_data(content);
                     sample.set_data_range(self.chart_start..self.chart_end);
                     sample.set_lipid_master_table(self.lipid_reference.clone());
+                    sample.set_include_unknowns(self.include_unknowns);
                     sample.set_noise_reduction(self.noise_reduction);
+                    sample.set_horizontal_deviation(self.horizontal_deviation);
                     self.samples.push(sample);
                 }
 
@@ -213,6 +230,7 @@ impl App {
                     sample.set_lipid_master_table(data.clone());
                 }
 
+                self.lipid_reference = data;
                 Task::none()
             }
             Message::ExportFile => {
@@ -230,11 +248,13 @@ impl App {
                 })
             }
             Message::ExportFileContent(path) => {
-                let mut content = String::new();
+                let content = self.as_retention_table();
+                fs::write(path, content).expect("Cannot write there");
+
+                /* let mut content = String::new();
                 for sample in &self.samples {
                     content += &sample.into_table();
-                }
-                fs::write(path, content).expect("Cannot write there");
+                } */
 
                 Task::none()
             }
@@ -251,6 +271,14 @@ impl App {
                 self.noise_reduction = value;
                 for sample in self.samples.iter_mut() {
                     sample.set_noise_reduction(value);
+                }
+
+                Task::none()
+            }
+            Message::HorizontalDeviation(value) => {
+                self.horizontal_deviation = value;
+                for sample in self.samples.iter_mut() {
+                    sample.set_horizontal_deviation(value);
                 }
 
                 Task::none()
@@ -287,35 +315,27 @@ impl App {
         }
     }
 
-    fn sample_to_table<'a>(&'a self, sample: &'a Chromatography) -> Element<'a, Message> {
-        let header = row![
-            text("Lipid").center().width(200),
-            text("Time (s)").center().width(80),
-            text("Area (m^2)").center().width(150)
-        ]
-        .spacing(20);
+    fn as_retention_table(&self) -> String {
+        let mut content = (0..self.samples.len())
+            .fold(String::from("Lipid,Expected Time (s)"), |accum, i| {
+                accum + &format!(",{}", i)
+            });
+        content.push_str("\n");
 
-        let mut data = column![header];
-
-        for peak in &sample.peaks {
-            let time = crate::round_to_precision(peak.turning_point.x(), 2);
-            let time_label = text(time).center().width(80);
-            let area = crate::round_to_precision(peak.area, 2);
-            let area_label = text(area).center().width(150);
-
-            let label = if let Some(lipid) = &peak.lipid {
-                text(lipid).center().width(200)
-            } else {
-                text("Unknown").center().width(200)
-            };
-
-            if self.include_unknowns || peak.lipid != None {
-                let row = row![label, time_label, area_label]
-                    .spacing(20)
-                    .align_y(Vertical::Center);
-                data = data.push(row);
+        for index in 0..self.lipid_reference.len() {
+            let (time, lipid) = &self.lipid_reference[index];
+            content.push_str(&lipid);
+            content.push_str(&format!(",{}", time));
+            for sample in &self.samples {
+                let retention_time = sample
+                    .lipids
+                    .get(index)
+                    .map_or(0.0, |peak| peak.turning_point.x());
+                content.push_str(&format!(",{}", retention_time));
             }
+            content.push_str("\n");
         }
-        scrollable(data).into()
+
+        content
     }
 }

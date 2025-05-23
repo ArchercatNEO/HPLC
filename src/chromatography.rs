@@ -1,22 +1,24 @@
 use std::iter::Iterator;
 use std::ops::Range;
 
-use iced::Point;
+use iced::widget::{row, scrollable, text};
+use iced::{Element, Point, widget::column};
 
 use crate::peak::Peak;
 use crate::vector::*;
 
 #[derive(Clone, Debug, Default)]
 pub struct Chromatography {
+    lipid_master_table: Vec<(f32, String)>,
     data: Vec<Point2D>,
+    pub baseline: Vec<Point2D>,
+    pub peaks: Vec<Peak>,
+    pub lipids: Vec<Peak>,
 
     data_range: Option<Range<f32>>,
-    pub baseline: Vec<Point2D>,
-
-    lipid_master_table: Vec<(f32, String)>,
     include_unknowns: bool,
     noise_reduction: f32,
-    pub peaks: Vec<Peak>,
+    horizontal_deviation: f32,
 
     //whyyyyyyyyyyyyyyyyyy
     //TODO: how can we not put data that is only for rendering here?
@@ -24,20 +26,6 @@ pub struct Chromatography {
 }
 
 impl Chromatography {
-    pub fn into_table(&self) -> String {
-        self.peaks
-            .iter()
-            .filter(|peak| self.include_unknowns || peak.lipid != None)
-            .map(|peak| {
-                let entry = peak.lipid.clone().unwrap_or("Unknown".to_string());
-                format!("{},{},{}\n", entry, peak.turning_point.x(), peak.area)
-            })
-            .fold(
-                "Lipid,Retention Time (s),Area\n".to_string(),
-                |accum, entry| accum + &entry,
-            )
-    }
-
     pub fn get_data(&self) -> Vec<Point2D> {
         if let Some(range) = &self.data_range {
             let cloned = self.data.to_vec().into_iter();
@@ -52,6 +40,7 @@ impl Chromatography {
         self.data = value;
         self.baseline = self.calculate_baseline();
         self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
 
         self
     }
@@ -73,6 +62,7 @@ impl Chromatography {
         self.data_range = Some(value);
         self.baseline = self.calculate_baseline();
         self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
 
         self
     }
@@ -96,6 +86,7 @@ impl Chromatography {
     pub fn set_lipid_master_table(&mut self, value: Vec<(f32, String)>) -> &mut Self {
         self.lipid_master_table = value;
         self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
 
         self
     }
@@ -103,6 +94,7 @@ impl Chromatography {
     pub fn set_include_unknowns(&mut self, show: bool) -> &mut Self {
         self.include_unknowns = show;
         self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
 
         self
     }
@@ -110,6 +102,14 @@ impl Chromatography {
     pub fn set_noise_reduction(&mut self, value: f32) -> &mut Self {
         self.noise_reduction = value;
         self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
+
+        self
+    }
+
+    pub fn set_horizontal_deviation(&mut self, value: f32) -> &mut Self {
+        self.horizontal_deviation = value;
+        self.lipids = self.label_peaks();
 
         self
     }
@@ -154,9 +154,6 @@ impl Chromatography {
 
         let mut result = vec![];
 
-        let mut lipids = self.lipid_master_table.iter();
-        let mut lipid = lipids.next();
-
         let mut baseline = self.baseline.iter();
         let mut baseline_start = baseline.next().unwrap();
         let mut baseline_end = baseline.next().unwrap();
@@ -186,13 +183,6 @@ impl Chromatography {
                 peak.turning_point = point.clone();
                 peak.area += point.y() - gradient * point.x() - offset;
                 continue;
-            } else if peak.lipid == None {
-                if let Some((x, name)) = lipid {
-                    if f32::abs(peak.turning_point.x() - x) < 0.5 {
-                        peak.lipid = Some(name.clone());
-                        lipid = lipids.next();
-                    }
-                }
             }
 
             if peak.end == Point2D::default() || peak.end.y() > point.y() {
@@ -213,5 +203,87 @@ impl Chromatography {
         }
 
         result
+    }
+
+    fn label_peaks(&mut self) -> Vec<Peak> {
+        let mut known: Vec<Peak> = vec![];
+
+        for (retention_time, lipid) in self.lipid_master_table.iter() {
+            for i in 1..self.peaks.len() {
+                let prev = &self.peaks[i - 1];
+                let next = &self.peaks[i];
+
+                if prev.turning_point.x() < *retention_time
+                    && *retention_time < next.turning_point.x()
+                {
+                    let dist1 = retention_time - prev.turning_point.x();
+                    let dist2 = next.turning_point.x() - retention_time;
+
+                    if dist1 < dist2 && dist1 < self.horizontal_deviation {
+                        let mut peak = prev.clone();
+                        peak.lipid = Some(lipid.clone());
+                        self.peaks[i - 1].lipid = Some(lipid.clone());
+                        known.push(peak);
+                    } else if dist2 < self.horizontal_deviation {
+                        let mut peak = next.clone();
+                        peak.lipid = Some(lipid.clone());
+                        self.peaks[i].lipid = Some(lipid.clone());
+                        known.push(peak);
+                    } else {
+                        let mut fake = Peak::default();
+                        fake.lipid = Some(lipid.clone());
+                        known.push(fake);
+
+                        self.peaks[i - 1].lipid = None;
+                        self.peaks[i].lipid = None;
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        known
+    }
+
+    pub fn into_table_csv(&self) -> String {
+        self.peaks
+            .iter()
+            .filter(|peak| self.include_unknowns || peak.lipid != None)
+            .map(|peak| {
+                let entry = peak.lipid.clone().unwrap_or("Unknown".to_string());
+                format!("{},{},{}\n", entry, peak.turning_point.x(), peak.area)
+            })
+            .fold(
+                "Lipid,Retention Time (s),Area\n".to_string(),
+                |accum, entry| accum + &entry,
+            )
+    }
+
+    //TODO: use `self.peaks` when `include_unknowns` is true
+    pub fn into_table_element<'a>(&'a self) -> Element<'a, ()> {
+        let mut table = column![];
+        let header = row![
+            text("Lipid").center().width(200),
+            text("Retention Time (s)").center().width(200),
+            text("Area").center().width(150)
+        ]
+        .spacing(20);
+
+        table = table.push(header);
+        for lipid in &self.lipids {
+            let name = lipid.lipid.clone().unwrap();
+            let retention_time = crate::round_to_precision(lipid.turning_point.x(), 2);
+            let area = crate::round_to_precision(lipid.area, 2);
+            let content = row![
+                text(name).center().width(200),
+                text(retention_time).center().width(200),
+                text(area).center().width(150)
+            ]
+            .spacing(20);
+            table = table.push(content);
+        }
+
+        scrollable(table).into()
     }
 }
