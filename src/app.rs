@@ -317,7 +317,7 @@ impl App {
 
     fn as_retention_table(&self) -> String {
         let mut content = (0..self.samples.len())
-            .fold(String::from("Lipid,Expected Time (s)"), |accum, i| {
+            .fold(String::from("Lipid,Expected Time (m)"), |accum, i| {
                 accum + &format!(",{}", i)
             });
         content.push_str("\n");
@@ -334,6 +334,29 @@ impl App {
                 content.push_str(&format!(",{}", retention_time));
             }
             content.push_str("\n");
+        }
+
+        content.push('\n');
+        content.push_str("Lipid");
+        for i in 0..self.samples.len() {
+            content.push_str(&format!(",{}", i));
+        }
+        content.push('\n');
+        content.push_str("Total Area");
+        for sample in &self.samples {
+            content.push_str(&format!(",{}", sample.total_area));
+        }
+        content.push('\n');
+        
+        for index in 0..self.lipid_reference.len() {
+            let (time, lipid) = &self.lipid_reference[index];
+            content.push_str(&lipid);
+            content.push_str(&format!(",{}", time));
+            for sample in &self.samples {
+                let area = sample.lipids.get(index).map_or(0.0, |peak| peak.area);
+                content.push_str(&format!(",{}", area));
+            }
+            content.push('\n');
         }
 
         content

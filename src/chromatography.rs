@@ -20,6 +20,8 @@ pub struct Chromatography {
     noise_reduction: f32,
     horizontal_deviation: f32,
 
+    pub total_area: f32,
+
     //whyyyyyyyyyyyyyyyyyy
     //TODO: how can we not put data that is only for rendering here?
     pub global_zoom: Point,
@@ -146,7 +148,7 @@ impl Chromatography {
         baseline
     }
 
-    fn calculate_peaks(&self) -> Vec<Peak> {
+    fn calculate_peaks(&mut self) -> Vec<Peak> {
         let data = self.get_data();
         if data.len() == 0 {
             return vec![];
@@ -163,9 +165,12 @@ impl Chromatography {
 
         let mut peak = Peak::default();
         for point in data.iter() {
+            self.total_area += point.y() - gradient * point.x() - offset;
+            peak.area += point.y() - gradient * point.x() - offset;
+
             if peak.start == Point2D::default() {
                 peak.start = point.clone();
-                peak.area += (point.y() - gradient * baseline_start.x() - offset) / 2.0;
+                peak.area -= (point.y() - gradient * baseline_start.x() - offset) / 2.0;
                 continue;
             }
 
@@ -181,7 +186,6 @@ impl Chromatography {
 
             if peak.turning_point.y() < point.y() {
                 peak.turning_point = point.clone();
-                peak.area += point.y() - gradient * point.x() - offset;
                 continue;
             }
 
@@ -255,7 +259,7 @@ impl Chromatography {
                 format!("{},{},{}\n", entry, peak.turning_point.x(), peak.area)
             })
             .fold(
-                "Lipid,Retention Time (s),Area\n".to_string(),
+                "Lipid,Retention Time (m),Area\n".to_string(),
                 |accum, entry| accum + &entry,
             )
     }
@@ -265,7 +269,7 @@ impl Chromatography {
         let mut table = column![];
         let header = row![
             text("Lipid").center().width(200),
-            text("Retention Time (s)").center().width(200),
+            text("Retention Time (m)").center().width(200),
             text("Area").center().width(150)
         ]
         .spacing(20);
