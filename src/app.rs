@@ -347,7 +347,7 @@ impl App {
             content.push_str(&format!(",{}", sample.total_area));
         }
         content.push('\n');
-        
+
         for index in 0..self.lipid_reference.len() {
             let (time, lipid) = &self.lipid_reference[index];
             content.push_str(&lipid);
@@ -357,6 +357,15 @@ impl App {
                 content.push_str(&format!(",{}", area));
             }
             content.push('\n');
+        }
+
+        content.push('\n');
+        content.push_str("Sample,Retention Time (m),Area\n");
+        for (index, sample) in self.samples.iter().enumerate() {
+            for peak in sample.peaks.iter().filter(|peak| peak.lipid.is_none()) {
+                let entry = format!("{},{},{}\n", index, peak.turning_point.x(), peak.area);
+                content.push_str(&entry);
+            }
         }
 
         content

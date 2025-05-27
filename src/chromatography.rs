@@ -238,7 +238,7 @@ impl Chromatography {
                         fake.lipid = Some(lipid.clone());
                         known.push(fake);
 
-                        self.peaks[i - 1].lipid = None;
+                        //self.peaks[i - 1].lipid = None;
                         self.peaks[i].lipid = None;
                     }
 
@@ -264,7 +264,6 @@ impl Chromatography {
             )
     }
 
-    //TODO: use `self.peaks` when `include_unknowns` is true
     pub fn into_table_element<'a>(&'a self) -> Element<'a, ()> {
         let mut table = column![];
         let header = row![
@@ -275,17 +274,32 @@ impl Chromatography {
         .spacing(20);
 
         table = table.push(header);
-        for lipid in &self.lipids {
-            let name = lipid.lipid.clone().unwrap();
-            let retention_time = crate::round_to_precision(lipid.turning_point.x(), 2);
-            let area = crate::round_to_precision(lipid.area, 2);
-            let content = row![
-                text(name).center().width(200),
-                text(retention_time).center().width(200),
-                text(area).center().width(150)
-            ]
-            .spacing(20);
-            table = table.push(content);
+        if self.include_unknowns {
+            for lipid in &self.peaks {
+                let name = lipid.lipid.as_ref().map_or("Unknown", |s| &s);
+                let retention_time = crate::round_to_precision(lipid.turning_point.x(), 2);
+                let area = crate::round_to_precision(lipid.area, 2);
+                let content = row![
+                    text(name).center().width(200),
+                    text(retention_time).center().width(200),
+                    text(area).center().width(150)
+                ]
+                .spacing(20);
+                table = table.push(content);
+            }
+        } else {
+            for lipid in &self.lipids {
+                let name = lipid.lipid.clone().unwrap();
+                let retention_time = crate::round_to_precision(lipid.turning_point.x(), 2);
+                let area = crate::round_to_precision(lipid.area, 2);
+                let content = row![
+                    text(name).center().width(200),
+                    text(retention_time).center().width(200),
+                    text(area).center().width(150)
+                ]
+                .spacing(20);
+                table = table.push(content);
+            }
         }
 
         scrollable(table).into()
