@@ -24,6 +24,7 @@ pub struct Chromatography {
 
     //whyyyyyyyyyyyyyyyyyy
     //TODO: how can we not put data that is only for rendering here?
+    pub title: Option<String>,
     pub global_zoom: Point,
 }
 
@@ -212,13 +213,29 @@ impl Chromatography {
     fn label_peaks(&mut self) -> Vec<Peak> {
         let mut known: Vec<Peak> = vec![];
 
+        for peak in self.peaks.iter_mut() {
+            peak.lipid = None;
+        }
+
         for (retention_time, lipid) in self.lipid_master_table.iter() {
             for i in 1..self.peaks.len() {
                 let prev = &self.peaks[i - 1];
                 let next = &self.peaks[i];
 
-                if prev.turning_point.x() < *retention_time
-                    && *retention_time < next.turning_point.x()
+                // If we are at the first peak, hope it's a relevant peak
+                if i == 1
+                    && f32::abs(prev.turning_point.x() - *retention_time)
+                        < self.horizontal_deviation
+                {
+                    let mut peak = prev.clone();
+                    peak.lipid = Some(lipid.clone());
+                    self.peaks[i - 1].lipid = Some(lipid.clone());
+                    known.push(peak);
+                    break;
+                }
+
+                if prev.turning_point.x() <= *retention_time
+                    && *retention_time <= next.turning_point.x()
                 {
                     let dist1 = retention_time - prev.turning_point.x();
                     let dist2 = next.turning_point.x() - retention_time;
@@ -237,9 +254,6 @@ impl Chromatography {
                         let mut fake = Peak::default();
                         fake.lipid = Some(lipid.clone());
                         known.push(fake);
-
-                        //self.peaks[i - 1].lipid = None;
-                        self.peaks[i].lipid = None;
                     }
 
                     break;

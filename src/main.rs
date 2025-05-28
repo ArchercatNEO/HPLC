@@ -1,4 +1,4 @@
-use std::{io::Read, os::unix::fs::MetadataExt, path};
+use std::{fs, io::Read, os::unix::fs::MetadataExt, path};
 
 use vector::*;
 
@@ -17,7 +17,7 @@ pub fn round_to_precision(value: f32, decimals: i32) -> f32 {
     (value * power).round() / power
 }
 
-pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: P, fun: F) -> Vec<U> {
+pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: &P, fun: F) -> Vec<U> {
     let mut file = std::fs::File::open(path).unwrap();
     let size = file.metadata().unwrap().size();
     let mut buffer: Vec<u8> = vec![0; size.try_into().unwrap()];
@@ -53,6 +53,17 @@ pub fn parse_line_as_lipids(line: &str) -> Option<(f32, String)> {
         line.split(",")
     };
 
+    data.next();
+
+    let lipid = {
+        let string = data.next();
+        if let Some(name) = string {
+            name.trim()
+        } else {
+            return None;
+        }
+    };
+
     let x: f32 = {
         let string = data.next();
         if let Some(number) = string {
@@ -61,15 +72,6 @@ pub fn parse_line_as_lipids(line: &str) -> Option<(f32, String)> {
             } else {
                 return None;
             }
-        } else {
-            return None;
-        }
-    };
-
-    let lipid = {
-        let string = data.next();
-        if let Some(name) = string {
-            name.trim()
         } else {
             return None;
         }
@@ -112,4 +114,14 @@ pub fn parse_line_as_data(line: &str) -> Option<Point2D> {
     };
 
     Some(Point2D::new(x, y))
+}
+
+pub fn parse_header<P: AsRef<path::Path>>(path: &P) -> Option<String> {
+    let file = fs::read_to_string(path);
+    file.map_or(None, |content| {
+        let header = content.lines().next().unwrap();
+        let mut data = header.split("\t");
+        data.next();
+        data.next().map(|slice| slice.to_string())
+    })
 }

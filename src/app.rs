@@ -126,7 +126,6 @@ impl App {
             chart_range,
             noise_tolerance,
             horizontal_deviation,
-            unknown_lipid
         ]
         .width(250);
 
@@ -137,9 +136,11 @@ impl App {
         let zoom_y_content = format!("Y Zoom: {}%", f32::powf(1.1, self.global_zoom.y) * 100.0);
         let zoom_y_label = text(zoom_y_content);
 
-        let options2 = column![zoom_x_label, zoom_x, zoom_y_label, zoom_y].width(250);
+        let options2 =
+            column![unknown_lipid, zoom_x_label, zoom_x, zoom_y_label, zoom_y].width(250);
 
         let ui = if let Some(handle) = self.sample_handle {
+            let header = text(format!("Sample {}", handle));
             let tabs = {
                 let mut buttons = column![];
                 for i in 0..self.samples.len() {
@@ -161,7 +162,7 @@ impl App {
                 .into();
 
             let body = row![tabs, chart.map(Message::from)];
-            column![body, footer]
+            column![header, body, footer]
         } else {
             let footer = row![options, options2].height(250);
             column![footer]
@@ -193,8 +194,9 @@ impl App {
             }
             Message::DataLoad(data) => {
                 for path in data {
-                    let content = crate::parse_file(path, crate::parse_line_as_data);
+                    let content = crate::parse_file(&path, crate::parse_line_as_data);
                     let mut sample = Chromatography::default();
+                    sample.title = crate::parse_header(&path);
                     sample.set_data(content);
                     sample.set_data_range(self.chart_start..self.chart_end);
                     sample.set_lipid_master_table(self.lipid_reference.clone());
@@ -217,7 +219,7 @@ impl App {
                     if let Some(handle) = maybe_handle {
                         //TODO: display loaded file path
                         let path = handle.path();
-                        let data = crate::parse_file(path, crate::parse_line_as_lipids);
+                        let data = crate::parse_file(&path, crate::parse_line_as_lipids);
 
                         Message::ReferenceLoad(data)
                     } else {
@@ -322,8 +324,7 @@ impl App {
             });
         content.push_str("\n");
 
-        for index in 0..self.lipid_reference.len() {
-            let (time, lipid) = &self.lipid_reference[index];
+        for (index, (time, lipid)) in self.lipid_reference.iter().enumerate() {
             content.push_str(&lipid);
             content.push_str(&format!(",{}", time));
             for sample in &self.samples {
