@@ -1,4 +1,4 @@
-use std::{fs, io::Read, os::unix::fs::MetadataExt, path};
+use std::{fs, path};
 
 use vector::*;
 
@@ -18,29 +18,11 @@ pub fn round_to_precision(value: f32, decimals: i32) -> f32 {
 }
 
 pub fn parse_file<P: AsRef<path::Path>, U, F: Fn(&str) -> Option<U>>(path: &P, fun: F) -> Vec<U> {
-    let mut file = std::fs::File::open(path).unwrap();
-    let size = file.metadata().unwrap().size();
-    let mut buffer: Vec<u8> = vec![0; size.try_into().unwrap()];
-    let result = file.read(&mut buffer);
-
-    match result {
-        Ok(_) => {
-            let content = String::from_utf8(buffer);
-            let ret = match content {
-                Ok(data) => {
-                    println!("file content {}", data);
-                    data.lines().filter_map(fun).collect()
-                }
-                Err(err) => {
-                    println!("convert to string err {}", err);
-                    vec![]
-                }
-            };
-            println!("read {} bytes", size);
-            ret
-        }
+    let file = fs::read_to_string(path);
+    match file {
+        Ok(content) => content.lines().filter_map(fun).collect(),
         Err(err) => {
-            println!("failed {}", err);
+            println!("{}", err);
             vec![]
         }
     }
@@ -119,7 +101,7 @@ pub fn parse_line_as_data(line: &str) -> Option<Point2D> {
 pub fn parse_header<P: AsRef<path::Path>>(path: &P) -> Option<String> {
     let file = fs::read_to_string(path);
     file.map_or(None, |content| {
-        let header = content.lines().next().unwrap();
+        let header = content.lines().next().unwrap_or("");
         let mut data = header.split("\t");
         data.next();
         data.next().map(|slice| slice.to_string())

@@ -11,6 +11,7 @@ pub struct Peak {
     pub turning_point: Point2D,
     pub end: Point2D,
     pub area: f32,
+    pub concentration: f32,
     pub lipid: Option<String>,
 }
 
@@ -38,11 +39,7 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
             backend.draw_circle(point, 5, &BLUE, true)?;
 
             if which == 1 {
-                let text = if let Some(label) = &self.lipid {
-                    label
-                } else {
-                    "Unknown"
-                };
+                let text = self.lipid.as_ref().map_or("Unknown", |label| &label);
 
                 backend.draw_text(
                     text,

@@ -1,11 +1,21 @@
 use std::iter::Iterator;
 use std::ops::Range;
 
-use iced::widget::{row, scrollable, text};
+use iced::color;
+use iced::widget::{container, row, scrollable, text};
 use iced::{Element, Point, widget::column};
 
 use crate::peak::Peak;
 use crate::vector::*;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SampleType {
+    #[default]
+    Data,
+    Blank,
+    Dex,
+    Standard,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct Chromatography {
@@ -19,6 +29,12 @@ pub struct Chromatography {
     include_unknowns: bool,
     noise_reduction: f32,
     horizontal_deviation: f32,
+    sample_type: SampleType,
+
+    subtract_blank: bool,
+    blank_data: Option<Vec<Point2D>>,
+    //dex_mapper: Box<dyn Fn(f32) -> f32>,
+    standard_peak: Option<Peak>,
 
     pub total_area: f32,
 
@@ -33,6 +49,15 @@ impl Chromatography {
         if let Some(range) = &self.data_range {
             let cloned = self.data.to_vec().into_iter();
             let filtered = cloned.filter(|point| range.start < point.x() && point.x() < range.end);
+            if self.subtract_blank {
+                if let Some(blank) = &self.blank_data {
+                    let data = filtered
+                        .zip(blank)
+                        .map(|(data, noise)| Point2D::new(data.x(), data.y() - noise.y()))
+                        .collect();
+                    return data;
+                }
+            }
             filtered.collect()
         } else {
             self.data.to_vec()
@@ -117,35 +142,81 @@ impl Chromatography {
         self
     }
 
+    pub fn get_sample_type(&self) -> SampleType {
+        self.sample_type
+    }
+
+    pub fn set_sample_type(&mut self, value: SampleType) -> &mut Self {
+        self.sample_type = value;
+
+        self
+    }
+
+    pub fn set_subtract_blank(&mut self, value: bool) -> &mut Self {
+        self.subtract_blank = value;
+        self.baseline = self.calculate_baseline();
+        self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
+
+        self
+    }
+
+    pub fn set_blank_data(&mut self, value: Option<Vec<Point2D>>) -> &mut Self {
+        self.blank_data = value;
+        self.baseline = self.calculate_baseline();
+        self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
+
+        self
+    }
+
+    pub fn set_standard_peak(&mut self, value: Option<Peak>) -> &mut Self {
+        self.standard_peak = value;
+        self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
+
+        self
+    }
+
     fn calculate_baseline(&self) -> Vec<Point2D> {
         let data = self.get_data();
-        if data.len() == 0 {
+        if data.len() < 2 {
             return vec![];
         }
 
-        let mut index = 1;
-
         let mut origin = &data[0];
-        let mut next = &Point2D::default();
-        let mut baseline = vec![data[0].clone()];
+        let mut orgin_index = 0;
 
-        while index + 1 < data.len() {
+        let mut next = &Point2D::default();
+        let mut next_index = 1;
+
+        let mut baseline = vec![];
+
+        while next_index + 1 < data.len() {
             let mut best_gradient = f32::INFINITY;
-            for i in index..data.len() {
+            for i in orgin_index..data.len() {
                 let point = &data[i];
 
                 let gradient = origin.gradient(point);
                 if gradient < best_gradient {
                     next = point;
+                    next_index = i;
                     best_gradient = gradient;
-                    index = i;
                 }
             }
 
-            baseline.push(next.clone());
+            for index in orgin_index..next_index {
+                let time = data[index].x();
+                let x = time - data[orgin_index].x();
+                let height = best_gradient * x + origin.y();
+                baseline.push(Point2D::new(time, height));
+            }
+
             origin = &next;
+            orgin_index = next_index;
         }
 
+        baseline.push(*next);
         baseline
     }
 
@@ -155,56 +226,85 @@ impl Chromatography {
             return vec![];
         }
 
+        self.total_area = 0.0;
+
         let mut result = vec![];
 
-        let mut baseline = self.baseline.iter();
-        let mut baseline_start = baseline.next().unwrap();
-        let mut baseline_end = baseline.next().unwrap();
-
-        let mut gradient = baseline_start.gradient(baseline_end);
-        let mut offset = baseline_start.y() - gradient * baseline_start.x();
-
         let mut peak = Peak::default();
-        for point in data.iter() {
-            self.total_area += point.y() - gradient * point.x() - offset;
-            peak.area += point.y() - gradient * point.x() - offset;
+        let mut index = 0;
+        while index + 1 < data.len() {
+            index += 1;
+            let mut prev = &data[index - 1];
+            let mut next = &data[index];
+
+            let area = {
+                let h = next.x() - prev.x();
+                let a = prev.y() - self.baseline[index - 1].y();
+                let b = next.y() - self.baseline[index].y();
+                h * (a + b) / 2.0
+            };
+
+            self.total_area += area;
+            peak.area += area;
 
             if peak.start == Point2D::default() {
-                peak.start = point.clone();
-                peak.area -= (point.y() - gradient * baseline_start.x() - offset) / 2.0;
+                peak.start = prev.clone();
                 continue;
             }
 
-            if baseline_end.x() < point.x() {
-                if let Some(next) = baseline.next() {
-                    baseline_start = baseline_end;
-                    baseline_end = next;
-
-                    gradient = baseline_start.gradient(baseline_end);
-                    offset = baseline_start.y() - gradient * baseline_start.x();
-                }
-            }
-
-            if peak.turning_point.y() < point.y() {
-                peak.turning_point = point.clone();
-                continue;
-            }
-
-            if peak.end == Point2D::default() || peak.end.y() > point.y() {
-                peak.end = point.clone();
-                peak.area += point.y() - (gradient * point.x() + offset);
-            } else {
-                let end = peak.end.clone();
-                peak.area -= (peak.end.y() - gradient * peak.end.x() - offset) / 2.0;
-                peak.area *= point.x() - peak.end.x();
-
-                if peak.turning_point.y() - peak.start.y() > self.noise_reduction {
-                    result.push(peak);
+            while prev.y() < next.y() {
+                index += 1;
+                if index == data.len() {
+                    return result;
                 }
 
-                peak = Peak::default();
-                peak.start = end;
+                prev = &data[index - 1];
+                next = &data[index];
+
+                let area = {
+                    let h = next.x() - prev.x();
+                    let a = prev.y() - self.baseline[index - 1].y();
+                    let b = next.y() - self.baseline[index].y();
+                    h * (a + b) / 2.0
+                };
+
+                self.total_area += area;
+                peak.area += area;
             }
+
+            peak.turning_point = prev.clone();
+
+            while prev.y() > next.y() {
+                index += 1;
+                if index == data.len() {
+                    return result;
+                }
+
+                prev = &data[index - 1];
+                next = &data[index];
+
+                let area = {
+                    let h = next.x() - prev.x();
+                    let a = prev.y() - self.baseline[index - 1].y();
+                    let b = next.y() - self.baseline[index].y();
+                    h * (a + b) / 2.0
+                };
+
+                self.total_area += area;
+                peak.area += area;
+            }
+
+            peak.end = prev.clone();
+            if peak.turning_point.y() - peak.start.y() > self.noise_reduction {
+                if let Some(standard) = &self.standard_peak {
+                    peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
+                }
+
+                result.push(peak);
+            }
+
+            peak = Peak::default();
+            peak.start = prev.clone();
         }
 
         result
@@ -280,42 +380,66 @@ impl Chromatography {
 
     pub fn into_table_element<'a>(&'a self) -> Element<'a, ()> {
         let mut table = column![];
+        let title = text(format!("Total Area - {}", self.total_area))
+            .center()
+            .width(750);
+
+        let mut gray = container::Style::default();
+        gray = gray.background(color!(0xaaaaaa));
+
+        let lipid_label = text("Lipid").center().width(200);
+        let retention_label = text("Retention Time (m)").center().width(200);
+        let area_label = text("Area").center().width(150);
+        let concentration_label = text("Concentration (nmol/ml)").center().width(200);
+
         let header = row![
-            text("Lipid").center().width(200),
-            text("Retention Time (m)").center().width(200),
-            text("Area").center().width(150)
+            text("|"),
+            container(lipid_label).style(move |_| gray),
+            text("|"),
+            container(retention_label).style(move |_| gray),
+            text("|"),
+            container(area_label).style(move |_| gray),
+            text("|"),
+            container(concentration_label).style(move |_| gray),
+            text("|"),
         ]
         .spacing(20);
 
+        let spacer_string = "-".repeat(175);
+
+        table = table.push(title);
+        table = table.push(text(spacer_string.clone()));
         table = table.push(header);
-        if self.include_unknowns {
-            for lipid in &self.peaks {
-                let name = lipid.lipid.as_ref().map_or("Unknown", |s| &s);
-                let retention_time = crate::round_to_precision(lipid.turning_point.x(), 2);
-                let area = crate::round_to_precision(lipid.area, 2);
-                let content = row![
-                    text(name).center().width(200),
-                    text(retention_time).center().width(200),
-                    text(area).center().width(150)
-                ]
-                .spacing(20);
-                table = table.push(content);
-            }
+
+        let iter = if self.include_unknowns {
+            &self.peaks
         } else {
-            for lipid in &self.lipids {
-                let name = lipid.lipid.clone().unwrap();
-                let retention_time = crate::round_to_precision(lipid.turning_point.x(), 2);
-                let area = crate::round_to_precision(lipid.area, 2);
-                let content = row![
-                    text(name).center().width(200),
-                    text(retention_time).center().width(200),
-                    text(area).center().width(150)
-                ]
-                .spacing(20);
-                table = table.push(content);
-            }
+            &self.lipids
+        };
+
+        for peak in iter {
+            let name = peak.lipid.as_ref().map_or("Unknown", |s| &s);
+            let retention_time = crate::round_to_precision(peak.turning_point.x(), 2);
+            let area = crate::round_to_precision(peak.area, 2);
+            let concentration = crate::round_to_precision(peak.concentration, 2);
+            let content = row![
+                text("|"),
+                text(name).center().width(200),
+                text("|"),
+                text(retention_time).center().width(200),
+                text("|"),
+                text(area).center().width(150),
+                text("|"),
+                text(format!("{}", concentration)).center().width(200),
+                text("|"),
+            ]
+            .spacing(20);
+
+            table = table.push(text(spacer_string.clone()));
+            table = table.push(content);
         }
 
+        table = table.push(text(spacer_string.clone()));
         scrollable(table).into()
     }
 }

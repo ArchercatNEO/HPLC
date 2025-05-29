@@ -5,22 +5,29 @@ use std::path::PathBuf;
 use iced::{
     Element, Length, Point, Task,
     alignment::Horizontal,
-    widget::{button, column, row, scrollable, slider, text, toggler},
+    widget::{button, column, radio, row, scrollable, slider, text, toggler},
 };
 use plotters_iced::ChartWidget;
 
-use crate::{chromatography::Chromatography, vector::*};
+use crate::{
+    chromatography::{Chromatography, SampleType},
+    vector::*,
+};
 
 #[derive(Debug)]
 pub struct App {
     lipid_reference: Vec<(f32, String)>,
     samples: Vec<Chromatography>,
     sample_handle: Option<usize>,
+    blank_handle: Option<usize>,
+    dex_handle: Option<usize>,
+    standard_handle: Option<usize>,
     chart_start: f32,
     chart_end: f32,
     noise_reduction: f32,
     horizontal_deviation: f32,
     include_unknowns: bool,
+    subtract_blank: bool,
     global_zoom: Point,
 }
 
@@ -30,11 +37,15 @@ impl Default for App {
             lipid_reference: vec![],
             samples: vec![],
             sample_handle: None,
+            blank_handle: None,
+            dex_handle: None,
+            standard_handle: None,
             chart_start: 9.0,
             chart_end: 34.5,
             noise_reduction: 0.3,
             horizontal_deviation: 0.5,
             include_unknowns: false,
+            subtract_blank: false,
             global_zoom: Point::new(0.0, 0.0),
         }
     }
@@ -53,9 +64,11 @@ pub enum Message {
     NoiseReduction(f32),
     HorizontalDeviation(f32),
     ShowUnknowns(bool),
+    SubtractBlank(bool),
     ZoomX(f32),
     ZoomY(f32),
     TabSwitch(usize),
+    SampleTypeSelect(SampleType),
 }
 
 impl From<()> for Message {
@@ -73,80 +86,156 @@ impl App {
 
         let export_file = button("Export Table").on_press(Message::ExportFile);
 
-        let chart_range = {
-            let start = slider(0.0..=60.0, self.chart_start, |start| {
+        //let file_tab = pick_list(options, selected, on_selected);
+
+        let start_element = {
+            let start_label = text("Chart Start: ").align_x(Horizontal::Right).width(150);
+            let start_slider = slider(0.0..=60.0, self.chart_start, |start| {
                 let clamped = start.min(self.chart_end);
                 Message::ChartRange(clamped..self.chart_end)
-            });
+            })
+            .width(300);
+            let start_info = text(format!("{}", self.chart_start)).width(100);
 
-            let end = slider(0.0..=60.0, self.chart_end, |end| {
-                let clamped = end.max(self.chart_start);
-                Message::ChartRange(self.chart_start..clamped)
-            });
-
-            let label_start = format!("Chart Start: {}", self.chart_start);
-            let label_end = format!("Chart End: {}", self.chart_end);
-            column![text(label_start), start, text(label_end), end]
+            row![start_label, start_slider, start_info].spacing(10)
         };
 
-        let noise_tolerance = {
-            let display = format!("Noise Reduction: {}", self.noise_reduction);
-            let label = text(display).align_x(Horizontal::Center);
+        let end_element = {
+            let end_label = text("Chart End: ").align_x(Horizontal::Right).width(150);
+            let end_slider = slider(0.0..=60.0, self.chart_end, |end| {
+                let clamped = end.max(self.chart_start);
+                Message::ChartRange(self.chart_start..clamped)
+            })
+            .width(300);
+            let end_info = text(format!("{}", self.chart_end)).width(100);
 
-            let noise_slider =
-                slider(0.3..=0.6, self.noise_reduction, Message::NoiseReduction).step(0.01);
+            row![end_label, end_slider, end_info].spacing(10)
+        };
 
-            column![label, noise_slider]
+        let noise_reduction = {
+            let label = text("Noise Reduction: ")
+                .align_x(Horizontal::Right)
+                .width(150);
+            let slider = slider(0.3..=0.6, self.noise_reduction, Message::NoiseReduction)
+                .step(0.01)
+                .width(300);
+            let info = text(format!("{}", self.noise_reduction)).width(100);
+
+            row![label, slider, info].spacing(10)
         };
 
         let horizontal_deviation = {
-            let display = format!("Horizontal Deviation: {}", self.horizontal_deviation);
-            let label = text(display).align_x(Horizontal::Center);
-
-            let noise_slider = slider(
+            let label = text("Horizontal Deviation: ")
+                .align_x(Horizontal::Right)
+                .width(150);
+            let slider = slider(
                 0.0..=10.0,
                 self.horizontal_deviation,
                 Message::HorizontalDeviation,
             )
-            .step(0.1);
+            .step(0.1)
+            .width(300);
+            let info = text(format!("{}", self.horizontal_deviation)).width(100);
 
-            column![label, noise_slider]
+            row![label, slider, info].spacing(10)
         };
 
-        let unknown_lipid = {
-            let label = text("Show Unknown Lipids").align_x(Horizontal::Center);
-            let slide = toggler(self.include_unknowns).on_toggle(Message::ShowUnknowns);
-            column![label, slide]
+        let zoom_x = {
+            let label = text("Zoom X: ").align_x(Horizontal::Right).width(150);
+            let slider = slider(0.0..=100.0, self.global_zoom.x, Message::ZoomX).width(300);
+            let info = text(format!("{}%", f32::powf(1.1, self.global_zoom.x) * 100.0)).width(100);
+
+            row![label, slider, info].spacing(10)
+        };
+
+        let zoom_y = {
+            let label = text("Zoom Y: ").align_x(Horizontal::Right).width(150);
+            let slider = slider(0.0..=100.0, self.global_zoom.y, Message::ZoomY).width(300);
+            let info = text(format!("{}%", f32::powf(1.1, self.global_zoom.y) * 100.0)).width(100);
+
+            row![label, slider, info].spacing(10)
         };
 
         let options = column![
             load_data_file,
             load_reference_file,
             export_file,
-            chart_range,
-            noise_tolerance,
+            start_element,
+            end_element,
+            noise_reduction,
             horizontal_deviation,
-        ]
-        .width(250);
+            zoom_x,
+            zoom_y
+        ];
 
-        let zoom_x = slider(0.0..=100.0, self.global_zoom.x, Message::ZoomX);
-        let zoom_x_content = format!("X Zoom: {}%", f32::powf(1.1, self.global_zoom.x) * 100.0);
-        let zoom_x_label = text(zoom_x_content);
-        let zoom_y = slider(0.0..=100.0, self.global_zoom.y, Message::ZoomY);
-        let zoom_y_content = format!("Y Zoom: {}%", f32::powf(1.1, self.global_zoom.y) * 100.0);
-        let zoom_y_label = text(zoom_y_content);
+        let unknown_lipid = {
+            let toggle = toggler(self.include_unknowns).on_toggle(Message::ShowUnknowns);
+            let label = text("Show Unknown Lipids").align_x(Horizontal::Center);
+            row![toggle, label]
+        };
 
-        let options2 =
-            column![unknown_lipid, zoom_x_label, zoom_x, zoom_y_label, zoom_y].width(250);
+        let subtract_blank = {
+            let toggle = toggler(self.subtract_blank).on_toggle(Message::SubtractBlank);
+            let label = text("Subtract blank");
+
+            row![toggle, label]
+        };
+
+        let sample_type = {
+            let selected = self
+                .sample_handle
+                .map(|handle| self.samples[handle].get_sample_type());
+
+            let header = text("Sample Type");
+
+            let data = radio(
+                "Data",
+                SampleType::Data,
+                selected,
+                Message::SampleTypeSelect,
+            );
+
+            let blank = radio(
+                "Blank",
+                SampleType::Blank,
+                selected,
+                Message::SampleTypeSelect,
+            );
+
+            let dex = radio("Dex", SampleType::Dex, selected, Message::SampleTypeSelect);
+
+            let standard = radio(
+                "Standard",
+                SampleType::Standard,
+                selected,
+                Message::SampleTypeSelect,
+            );
+
+            column![header, data, blank, dex, standard]
+        };
+
+        let options2 = column![unknown_lipid, subtract_blank, sample_type].width(250);
 
         let ui = if let Some(handle) = self.sample_handle {
             let header = text(format!("Sample {}", handle));
             let tabs = {
                 let mut buttons = column![];
-                for i in 0..self.samples.len() {
+                for (i, sample) in self.samples.iter().enumerate() {
                     let content = format!("{}", i);
                     let label = text(content);
-                    let button = button(label).on_press(Message::TabSwitch(i));
+                    let button =
+                        button(label)
+                            .on_press(Message::TabSwitch(i))
+                            .style(|_theme, _status| {
+                                let style = button::Style::default();
+                                let color = match sample.get_sample_type() {
+                                    SampleType::Data => iced::color!(0x00ffff),     //cyan
+                                    SampleType::Blank => iced::color!(0x00ff00),    //green
+                                    SampleType::Dex => iced::color!(0xff0000),      //red
+                                    SampleType::Standard => iced::color!(0xffaa00), //orange
+                                };
+                                style.with_background(color)
+                            });
                     buttons = buttons.push(button);
                 }
                 scrollable(buttons)
@@ -155,7 +244,7 @@ impl App {
             let sample = &self.samples[handle];
             let table = sample.into_table_element().map(Message::from);
 
-            let footer = row![options, options2, table].height(250);
+            let footer = row![options, options2, table].height(300);
             let chart: Element<()> = ChartWidget::new(sample.clone())
                 .height(Length::Fill)
                 .width(Length::Fill)
@@ -293,6 +382,20 @@ impl App {
 
                 Task::none()
             }
+            Message::SubtractBlank(value) => {
+                self.subtract_blank = value;
+                for (i, sample) in self.samples.iter_mut().enumerate() {
+                    if let Some(handle) = self.blank_handle {
+                        if handle == i {
+                            continue;
+                        }
+                    }
+
+                    sample.set_subtract_blank(value);
+                }
+
+                Task::none()
+            }
             Message::ZoomX(zoom) => {
                 self.global_zoom.x = zoom;
                 for sample in self.samples.iter_mut() {
@@ -314,60 +417,139 @@ impl App {
 
                 Task::none()
             }
+            Message::SampleTypeSelect(sample_type) => {
+                if let Some(handle) = self.sample_handle {
+                    match self.samples[handle].get_sample_type() {
+                        SampleType::Data => (),
+                        SampleType::Blank => {
+                            self.blank_handle = None;
+                        }
+                        SampleType::Dex => {
+                            self.dex_handle = None;
+                        }
+                        SampleType::Standard => {
+                            self.standard_handle = None;
+                        }
+                    };
+
+                    match sample_type {
+                        SampleType::Data => (),
+                        SampleType::Blank => {
+                            if let Some(blank_handle) = self.blank_handle {
+                                self.samples[blank_handle].set_sample_type(SampleType::Data);
+                            }
+
+                            self.blank_handle = Some(handle);
+                            self.samples[handle].set_subtract_blank(false);
+
+                            let data = self.samples[handle].get_data();
+
+                            for (i, sample) in self.samples.iter_mut().enumerate() {
+                                if i == handle {
+                                    continue;
+                                }
+
+                                sample.set_blank_data(Some(data.clone()));
+                            }
+                        }
+                        SampleType::Dex => {
+                            if let Some(dex_handle) = self.dex_handle {
+                                self.samples[dex_handle].set_sample_type(SampleType::Data);
+                            }
+
+                            self.dex_handle = Some(handle);
+                        }
+                        SampleType::Standard => {
+                            if let Some(standard_handle) = self.standard_handle {
+                                self.samples[standard_handle].set_sample_type(SampleType::Data);
+                            }
+
+                            self.standard_handle = Some(handle);
+                            let peak = self.samples[handle].peaks[0].clone();
+                            for sample in self.samples.iter_mut() {
+                                sample.set_standard_peak(Some(peak.clone()));
+                            }
+                        }
+                    }
+
+                    self.samples[handle].set_sample_type(sample_type);
+                }
+
+                Task::none()
+            }
         }
     }
 
     fn as_retention_table(&self) -> String {
-        let mut content = (0..self.samples.len())
-            .fold(String::from("Lipid,Expected Time (m)"), |accum, i| {
-                accum + &format!(",{}", i)
-            });
-        content.push_str("\n");
-
-        for (index, (time, lipid)) in self.lipid_reference.iter().enumerate() {
-            content.push_str(&lipid);
-            content.push_str(&format!(",{}", time));
-            for sample in &self.samples {
-                let retention_time = sample
-                    .lipids
-                    .get(index)
-                    .map_or(0.0, |peak| peak.turning_point.x());
-                content.push_str(&format!(",{}", retention_time));
-            }
-            content.push_str("\n");
-        }
-
-        content.push('\n');
-        content.push_str("Lipid");
+        let mut content = String::from("Retention Times\n");
+        content.push_str("Lipid,Expected Time (m)");
         for i in 0..self.samples.len() {
             content.push_str(&format!(",{}", i));
         }
-        content.push('\n');
-        content.push_str("Total Area");
+
+        for (i, lipid) in self.lipid_reference.iter().enumerate() {
+            content.push_str("\n");
+            content.push_str(&lipid.1);
+            content.push_str(&format!(",{}", lipid.0));
+            for sample in &self.samples {
+                let retention_time = sample
+                    .lipids
+                    .get(i)
+                    .map_or(0.0, |peak| peak.turning_point.x());
+                content.push_str(&format!(",{}", retention_time));
+            }
+        }
+
+        content.push_str("\n\nAreas");
+        content.push_str("\nLipid");
+        for i in 0..self.samples.len() {
+            content.push_str(&format!(",{}", i));
+        }
+
+        content.push_str("\nTotal Area");
         for sample in &self.samples {
             content.push_str(&format!(",{}", sample.total_area));
         }
-        content.push('\n');
 
-        for index in 0..self.lipid_reference.len() {
-            let (time, lipid) = &self.lipid_reference[index];
-            content.push_str(&lipid);
-            content.push_str(&format!(",{}", time));
+        for (i, lipid) in self.lipid_reference.iter().enumerate() {
+            content.push('\n');
+            content.push_str(&lipid.1);
             for sample in &self.samples {
-                let area = sample.lipids.get(index).map_or(0.0, |peak| peak.area);
+                let area = sample.lipids.get(i).map_or(0.0, |peak| peak.area);
                 content.push_str(&format!(",{}", area));
             }
-            content.push('\n');
         }
 
-        content.push('\n');
-        content.push_str("Sample,Retention Time (m),Area\n");
+        content.push_str("\n\nConcentrations");
+        content.push_str("\nLipid");
+        for i in 0..self.samples.len() {
+            content.push_str(&format!(",{}", i));
+        }
+
+        for (i, lipid) in self.lipid_reference.iter().enumerate() {
+            content.push('\n');
+            content.push_str(&lipid.1);
+            for sample in &self.samples {
+                let concentration = sample.peaks.get(i).map_or(0.0, |peak| peak.concentration);
+                content.push_str(&format!(",{}", concentration));
+            }
+        }
+
+        content.push_str("\n\nUnknown Peaks");
+        content.push_str("\nSample,Retention Time (m),Area\n");
         for (index, sample) in self.samples.iter().enumerate() {
             for peak in sample.peaks.iter().filter(|peak| peak.lipid.is_none()) {
                 let entry = format!("{},{},{}\n", index, peak.turning_point.x(), peak.area);
                 content.push_str(&entry);
             }
         }
+
+        if let Some(handle) = self.standard_handle {
+            content.push_str("\nStandard Area\n");
+            content.push_str(&format!("{}", self.samples[handle].peaks[0].area));
+        }
+
+        content.push('\n');
 
         content
     }
