@@ -3,9 +3,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 use iced::{
-    Element, Length, Point, Task,
-    alignment::Horizontal,
-    widget::{button, column, radio, row, scrollable, slider, text, toggler},
+    alignment::Horizontal, widget::{button, column, radio, row, scrollable, slider, text, toggler}, Element, Length, Point, Task
 };
 use plotters_iced::ChartWidget;
 
@@ -93,7 +91,7 @@ impl App {
             let start_slider = slider(0.0..=60.0, self.chart_start, |start| {
                 let clamped = start.min(self.chart_end);
                 Message::ChartRange(clamped..self.chart_end)
-            })
+            }).step(0.5)
             .width(300);
             let start_info = text(format!("{}", self.chart_start)).width(100);
 
@@ -105,7 +103,7 @@ impl App {
             let end_slider = slider(0.0..=60.0, self.chart_end, |end| {
                 let clamped = end.max(self.chart_start);
                 Message::ChartRange(self.chart_start..clamped)
-            })
+            }).step(0.5)
             .width(300);
             let end_info = text(format!("{}", self.chart_end)).width(100);
 
@@ -245,16 +243,18 @@ impl App {
             let table = sample.into_table_element().map(Message::from);
 
             let footer = row![options, options2, table].height(300);
+            let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::default()));
             let chart: Element<()> = ChartWidget::new(sample.clone())
                 .height(Length::Fill)
                 .width(Length::Fill)
                 .into();
 
             let body = row![tabs, chart.map(Message::from)];
-            column![header, body, footer]
+            column![header, body, scroll_footer]
         } else {
             let footer = row![options, options2].height(250);
-            column![footer]
+            let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::default()));
+            column![scroll_footer]
         };
 
         ui.into()
