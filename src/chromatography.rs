@@ -4,6 +4,7 @@ use std::ops::Range;
 use iced::color;
 use iced::widget::{container, row, scrollable, text};
 use iced::{Element, Point, widget::column};
+use plotters::style::{BLACK, YELLOW};
 
 use crate::peak::{Peak, PeakType};
 use crate::vector::*;
@@ -267,6 +268,9 @@ impl Chromatography {
         let mut peak = Peak::default();
         peak.start = data[0].clone();
 
+        let mut new_peak = true;
+        let mut prev_min = data[0].y() - self.baseline[0].y();
+
         for index in 3..data.len() {
             let prev = &data[index - 1];
             let next = &data[index];
@@ -288,16 +292,22 @@ impl Chromatography {
 
             if prev_drv.y() < 0.0 && next_drv.y() > 0.0 {
                 // Minimum
-                if peak.height > self.height_requirement {
+                if new_peak {
                     // Real peak
+                    prev_min = height;
+
                     peak.end = prev.clone();
                     if let Some(standard) = &self.standard_peak {
                         peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
                     }
 
                     result.push(peak);
-                } else {
-                    // Just noise, merge last peak with this one
+                    peak = Peak::default();
+                    peak.start = prev.clone();
+                } else if height < prev_min {
+                    // Lower minimum but without a peak, merge with prev peak
+                    prev_min = height;
+
                     if let Some(prev_peak) = result.last_mut() {
                         prev_peak.end = prev.clone();
                         prev_peak.area += peak.area;
@@ -306,39 +316,40 @@ impl Chromatography {
                                 prev_peak.area * standard.area * 40.0 * 20.0 * 0.0025;
                         }
                     }
-                }
 
-                peak = Peak::default();
-                peak.start = prev.clone();
+                    peak = Peak::default();
+                    peak.start = prev.clone();
+                }
             } else if prev_drv.y() > 0.0 && next_drv.y() < 0.0 {
                 // Maximum
+                new_peak = height > self.height_requirement;
                 peak.retention_point = prev.clone();
-                peak.height = prev.y() - self.baseline[index - 1].y();
+                peak.height = height;
             }
 
             let prev_drv2 = &self.second_derivative[index - 3];
             let next_drv2 = &self.second_derivative[index - 2];
 
             let rising_zero = prev_drv2.y() < 0.0 && next_drv2.y() > 0.0;
+
+            if rising_zero && prev_drv.y() > 0.0 && height > self.height_requirement {
+                let mut shoulder = Peak::default();
+                shoulder.start = prev.clone();
+                shoulder.retention_point = next.clone();
+                shoulder.peak_type = PeakType::Shoulder(BLACK);
+
+                result.push(shoulder);
+            }
+
             let falling_zero = prev_drv2.y() > 0.0 && next_drv2.y() < 0.0;
 
-            if (rising_zero || falling_zero)
-                && f32::abs(prev_drv.y()) < self.derivative_cone
-                && height > self.height_requirement
-            {
-                // Shoulder
-                peak.peak_type = PeakType::Shoulder;
-                peak.end = prev.clone();
-                if let Some(standard) = &self.standard_peak {
-                    peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
-                }
+            if falling_zero && prev_drv.y() < 0.0 {
+                let mut shoulder = Peak::default();
+                shoulder.start = prev.clone();
+                shoulder.retention_point = next.clone();
+                shoulder.peak_type = PeakType::Shoulder(BLACK);
 
-                result.push(peak);
-
-                peak = Peak::default();
-                peak.start = prev.clone();
-                peak.retention_point = prev.clone();
-                peak.height = prev.y() - self.baseline[index - 1].y();
+                result.push(shoulder);
             }
         }
 
@@ -397,24 +408,6 @@ impl Chromatography {
         }
 
         known
-    }
-
-    pub fn reference_lipids(&self) -> Vec<Peak> {
-        let data = self.get_data();
-        if data.len() == 0 {
-            return vec![];
-        }
-
-        let mut lipids = Vec::new();
-
-        for (retention_time, lipid) in &self.lipid_master_table {
-            let mut reference = Peak::default();
-            reference.retention_point = Point2D::new(*retention_time, 0.0);
-            reference.lipid = Some(lipid.clone());
-            lipids.push(reference);
-        }
-
-        lipids
     }
 
     pub fn into_table_csv(&self) -> String {

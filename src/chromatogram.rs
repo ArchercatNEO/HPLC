@@ -86,6 +86,7 @@ impl Chart<()> for Chromatography {
                 .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
         } else {
             let data_series = LineSeries::new(self.get_data(), &RED);
+
             chart
                 .draw_series(data_series)
                 .expect("failed to draw series")
@@ -104,12 +105,6 @@ impl Chart<()> for Chromatography {
                 .expect("failed to draw series")
                 .label("peaks")
                 .legend(|(x, y)| Circle::new((x, y), 5, &BLUE));
-
-            chart
-                .draw_series(self.reference_lipids())
-                .expect("failed to draw series")
-                .label("expected lipids")
-                .legend(|(x, y)| Cross::new((x, y), 5, &RED));
         }
     }
 

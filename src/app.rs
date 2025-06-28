@@ -701,8 +701,8 @@ impl App {
     fn as_retention_table(&self) -> String {
         let mut content = String::from("Retention Times\n");
         content.push_str("Lipid,Expected Time (m)");
-        for i in 0..self.samples.len() {
-            content.push_str(&format!(",{}", i));
+        for sample in &self.samples {
+            content.push_str(&format!(",{}", sample.title.as_ref().unwrap()));
         }
 
         for (i, lipid) in self.lipid_reference.iter().enumerate() {
@@ -720,8 +720,8 @@ impl App {
 
         content.push_str("\n\nAreas");
         content.push_str("\nLipid");
-        for i in 0..self.samples.len() {
-            content.push_str(&format!(",{}", i));
+        for sample in &self.samples {
+            content.push_str(&format!(",{}", sample.title.as_ref().unwrap()));
         }
 
         content.push_str("\nTotal Area");
@@ -740,8 +740,8 @@ impl App {
 
         content.push_str("\n\nConcentrations");
         content.push_str("\nLipid");
-        for i in 0..self.samples.len() {
-            content.push_str(&format!(",{}", i));
+        for sample in &self.samples {
+            content.push_str(&format!(",{}", sample.title.as_ref().unwrap()));
         }
 
         for (i, lipid) in self.lipid_reference.iter().enumerate() {

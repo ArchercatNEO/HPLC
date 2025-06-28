@@ -9,7 +9,8 @@ use crate::vector::*;
 pub enum PeakType {
     #[default]
     Standard,
-    Shoulder,
+    Shoulder(RGBColor),
+    Reference,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -45,7 +46,7 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
     > {
         match self.peak_type {
             PeakType::Standard => {
-                backend.draw_circle(pos.next().unwrap(), 5, &BLUE, true)?;
+                backend.draw_circle(pos.next().unwrap(), 3, &BLUE, true)?;
 
                 let retention = pos.next().unwrap();
                 let text = self.lipid.as_ref().map_or("Unknown", |label| &label);
@@ -55,9 +56,16 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                     &("sans-serif", 10).into_text_style(&parent_dim),
                     retention,
                 )?;
-                backend.draw_circle(retention, 5, &GREEN, true)?;
+                backend.draw_circle(retention, 3, &GREEN, true)?;
             }
-            PeakType::Shoulder => {
+            PeakType::Shoulder(color) => {
+                let start = pos.next().unwrap();
+                let retention = pos.next().unwrap();
+
+                backend.draw_circle(start, 3, &color, true)?;
+                backend.draw_circle(retention, 3, &color, true)?;
+            }
+            PeakType::Reference => {
                 let retention = pos.next().unwrap();
                 let text = self.lipid.as_ref().map_or("Unknown", |label| &label);
 
@@ -66,7 +74,7 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                     &("sans-serif", 10).into_text_style(&parent_dim),
                     retention,
                 )?;
-                backend.draw_circle(retention, 5, &RED, true)?;
+                backend.draw_circle(retention, 3, &RED, true)?;
             }
         }
 
