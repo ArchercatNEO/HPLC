@@ -5,7 +5,7 @@ use iced::color;
 use iced::widget::{container, row, scrollable, text};
 use iced::{Element, Point, widget::column};
 
-use crate::peak::Peak;
+use crate::peak::{Peak, PeakType};
 use crate::vector::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -21,6 +21,8 @@ pub enum SampleType {
 pub struct Chromatography {
     lipid_master_table: Vec<(f32, String)>,
     data: Vec<Point2D>,
+    pub first_derivative: Vec<Point2D>,
+    pub second_derivative: Vec<Point2D>,
     pub baseline: Vec<Point2D>,
     pub peaks: Vec<Peak>,
     pub lipids: Vec<Peak>,
@@ -28,6 +30,7 @@ pub struct Chromatography {
     data_range: Option<Range<f32>>,
     include_unknowns: bool,
     noise_reduction: f32,
+    derivative_cone: f32,
     horizontal_deviation: f32,
     sample_type: SampleType,
 
@@ -42,6 +45,7 @@ pub struct Chromatography {
     //TODO: how can we not put data that is only for rendering here?
     pub title: Option<String>,
     pub global_zoom: Point,
+    pub show_derivative: bool,
 }
 
 impl Chromatography {
@@ -66,6 +70,8 @@ impl Chromatography {
 
     pub fn set_data(&mut self, value: Vec<Point2D>) -> &mut Self {
         self.data = value;
+        self.first_derivative = self.calculate_derivative(&self.get_data());
+        self.second_derivative = self.calculate_derivative(&self.first_derivative);
         self.baseline = self.calculate_baseline();
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
@@ -88,6 +94,8 @@ impl Chromatography {
     /// Setting this will crop the raw data for the purposes of the baseline and peaks
     pub fn set_data_range(&mut self, value: Range<f32>) -> &mut Self {
         self.data_range = Some(value);
+        self.first_derivative = self.calculate_derivative(&self.get_data());
+        self.second_derivative = self.calculate_derivative(&self.first_derivative);
         self.baseline = self.calculate_baseline();
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
@@ -135,6 +143,14 @@ impl Chromatography {
         self
     }
 
+    pub fn set_derivative_cone(&mut self, value: f32) -> &mut Self {
+        self.derivative_cone = value;
+        self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
+
+        self
+    }
+
     pub fn set_horizontal_deviation(&mut self, value: f32) -> &mut Self {
         self.horizontal_deviation = value;
         self.lipids = self.label_peaks();
@@ -176,6 +192,24 @@ impl Chromatography {
         self.lipids = self.label_peaks();
 
         self
+    }
+
+    fn calculate_derivative(&self, graph: &[Point2D]) -> Vec<Point2D> {
+        if graph.len() < 2 {
+            return vec![];
+        }
+
+        let mut derivative = Vec::with_capacity(graph.len());
+
+        for i in 1..graph.len() {
+            let prev = &graph[i - 1];
+            let next = &graph[i];
+
+            let point = Point2D::new(prev.x(), prev.gradient(next));
+            derivative.push(point);
+        }
+
+        derivative
     }
 
     fn calculate_baseline(&self) -> Vec<Point2D> {
@@ -231,11 +265,13 @@ impl Chromatography {
         let mut result = vec![];
 
         let mut peak = Peak::default();
-        let mut index = 0;
-        while index + 1 < data.len() {
-            index += 1;
-            let mut prev = &data[index - 1];
-            let mut next = &data[index];
+        peak.start = data[0].clone();
+
+        for index in 3..data.len() {
+            let prev = &data[index - 1];
+            let next = &data[index];
+
+            let height = prev.y() - self.baseline[index - 1].y();
 
             let area = {
                 let h = next.x() - prev.x();
@@ -247,64 +283,63 @@ impl Chromatography {
             self.total_area += area;
             peak.area += area;
 
-            if peak.start == Point2D::default() {
+            let prev_drv = &self.first_derivative[index - 2];
+            let next_drv = &self.first_derivative[index - 1];
+
+            if prev_drv.y() < 0.0 && next_drv.y() > 0.0 {
+                // Minimum
+                if peak.height > self.noise_reduction {
+                    // Real peak
+                    peak.end = prev.clone();
+                    if let Some(standard) = &self.standard_peak {
+                        peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
+                    }
+
+                    result.push(peak);
+                } else {
+                    // Just noise, merge last peak with this one
+                    if let Some(prev_peak) = result.last_mut() {
+                        prev_peak.end = prev.clone();
+                        prev_peak.area += peak.area;
+                        if let Some(standard) = &self.standard_peak {
+                            prev_peak.concentration =
+                                prev_peak.area * standard.area * 40.0 * 20.0 * 0.0025;
+                        }
+                    }
+                }
+
+                peak = Peak::default();
                 peak.start = prev.clone();
-                continue;
+            } else if prev_drv.y() > 0.0 && next_drv.y() < 0.0 {
+                // Maximum
+                peak.retention_point = prev.clone();
+                peak.height = prev.y() - self.baseline[index - 1].y();
             }
 
-            while prev.y() < next.y() {
-                index += 1;
-                if index == data.len() {
-                    return result;
-                }
+            let prev_drv2 = &self.second_derivative[index - 3];
+            let next_drv2 = &self.second_derivative[index - 2];
 
-                prev = &data[index - 1];
-                next = &data[index];
+            let rising_zero = prev_drv2.y() < 0.0 && next_drv2.y() > 0.0;
+            let falling_zero = prev_drv2.y() > 0.0 && next_drv2.y() < 0.0;
 
-                let area = {
-                    let h = next.x() - prev.x();
-                    let a = prev.y() - self.baseline[index - 1].y();
-                    let b = next.y() - self.baseline[index].y();
-                    h * (a + b) / 2.0
-                };
-
-                self.total_area += area;
-                peak.area += area;
-            }
-
-            peak.turning_point = prev.clone();
-
-            while prev.y() > next.y() {
-                index += 1;
-                if index == data.len() {
-                    return result;
-                }
-
-                prev = &data[index - 1];
-                next = &data[index];
-
-                let area = {
-                    let h = next.x() - prev.x();
-                    let a = prev.y() - self.baseline[index - 1].y();
-                    let b = next.y() - self.baseline[index].y();
-                    h * (a + b) / 2.0
-                };
-
-                self.total_area += area;
-                peak.area += area;
-            }
-
-            peak.end = prev.clone();
-            if peak.turning_point.y() - peak.start.y() > self.noise_reduction {
+            if (rising_zero || falling_zero)
+                && f32::abs(prev_drv.y()) < self.derivative_cone
+                && height > self.noise_reduction
+            {
+                // Shoulder
+                peak.peak_type = PeakType::Shoulder;
+                peak.end = prev.clone();
                 if let Some(standard) = &self.standard_peak {
                     peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
                 }
 
                 result.push(peak);
-            }
 
-            peak = Peak::default();
-            peak.start = prev.clone();
+                peak = Peak::default();
+                peak.start = prev.clone();
+                peak.retention_point = prev.clone();
+                peak.height = prev.y() - self.baseline[index - 1].y();
+            }
         }
 
         result
@@ -324,7 +359,7 @@ impl Chromatography {
 
                 // If we are at the first peak, hope it's a relevant peak
                 if i == 1
-                    && f32::abs(prev.turning_point.x() - *retention_time)
+                    && f32::abs(prev.retention_point.x() - *retention_time)
                         < self.horizontal_deviation
                 {
                     let mut peak = prev.clone();
@@ -334,11 +369,11 @@ impl Chromatography {
                     break;
                 }
 
-                if prev.turning_point.x() <= *retention_time
-                    && *retention_time <= next.turning_point.x()
+                if prev.retention_point.x() <= *retention_time
+                    && *retention_time <= next.retention_point.x()
                 {
-                    let dist1 = retention_time - prev.turning_point.x();
-                    let dist2 = next.turning_point.x() - retention_time;
+                    let dist1 = retention_time - prev.retention_point.x();
+                    let dist2 = next.retention_point.x() - retention_time;
 
                     if dist1 < dist2 && dist1 < self.horizontal_deviation {
                         let mut peak = prev.clone();
@@ -364,13 +399,31 @@ impl Chromatography {
         known
     }
 
+    pub fn reference_lipids(&self) -> Vec<Peak> {
+        let data = self.get_data();
+        if data.len() == 0 {
+            return vec![];
+        }
+
+        let mut lipids = Vec::new();
+
+        for (retention_time, lipid) in &self.lipid_master_table {
+            let mut reference = Peak::default();
+            reference.retention_point = Point2D::new(*retention_time, 0.0);
+            reference.lipid = Some(lipid.clone());
+            lipids.push(reference);
+        }
+
+        lipids
+    }
+
     pub fn into_table_csv(&self) -> String {
         self.peaks
             .iter()
             .filter(|peak| self.include_unknowns || peak.lipid != None)
             .map(|peak| {
                 let entry = peak.lipid.clone().unwrap_or("Unknown".to_string());
-                format!("{},{},{}\n", entry, peak.turning_point.x(), peak.area)
+                format!("{},{},{}\n", entry, peak.retention_point.x(), peak.area)
             })
             .fold(
                 "Lipid,Retention Time (m),Area\n".to_string(),
@@ -419,7 +472,7 @@ impl Chromatography {
 
         for peak in iter {
             let name = peak.lipid.as_ref().map_or("Unknown", |s| &s);
-            let retention_time = crate::round_to_precision(peak.turning_point.x(), 2);
+            let retention_time = crate::round_to_precision(peak.retention_point.x(), 2);
             let area = crate::round_to_precision(peak.area, 2);
             let concentration = crate::round_to_precision(peak.concentration, 2);
             let content = row![

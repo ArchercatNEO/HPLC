@@ -3,7 +3,9 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 use iced::{
-    alignment::Horizontal, widget::{button, column, radio, row, scrollable, slider, text, toggler}, Element, Length, Point, Task
+    Element, Length, Point, Task,
+    alignment::Horizontal,
+    widget::{button, column, radio, row, scrollable, slider, text, toggler},
 };
 use plotters_iced::ChartWidget;
 
@@ -23,9 +25,11 @@ pub struct App {
     chart_start: f32,
     chart_end: f32,
     noise_reduction: f32,
+    derivative_cone: f32,
     horizontal_deviation: f32,
     include_unknowns: bool,
     subtract_blank: bool,
+    show_derivative: bool,
     global_zoom: Point,
 }
 
@@ -41,9 +45,11 @@ impl Default for App {
             chart_start: 9.0,
             chart_end: 34.5,
             noise_reduction: 0.3,
+            derivative_cone: 0.5,
             horizontal_deviation: 0.5,
             include_unknowns: false,
             subtract_blank: false,
+            show_derivative: false,
             global_zoom: Point::new(0.0, 0.0),
         }
     }
@@ -60,9 +66,11 @@ pub enum Message {
     ExportFileContent(PathBuf),
     ChartRange(Range<f32>),
     NoiseReduction(f32),
+    DerivativeCone(f32),
     HorizontalDeviation(f32),
     ShowUnknowns(bool),
     SubtractBlank(bool),
+    ShowDerivate(bool),
     ZoomX(f32),
     ZoomY(f32),
     TabSwitch(usize),
@@ -91,7 +99,8 @@ impl App {
             let start_slider = slider(0.0..=60.0, self.chart_start, |start| {
                 let clamped = start.min(self.chart_end);
                 Message::ChartRange(clamped..self.chart_end)
-            }).step(0.5)
+            })
+            .step(0.5)
             .width(300);
             let start_info = text(format!("{}", self.chart_start)).width(100);
 
@@ -103,7 +112,8 @@ impl App {
             let end_slider = slider(0.0..=60.0, self.chart_end, |end| {
                 let clamped = end.max(self.chart_start);
                 Message::ChartRange(self.chart_start..clamped)
-            }).step(0.5)
+            })
+            .step(0.5)
             .width(300);
             let end_info = text(format!("{}", self.chart_end)).width(100);
 
@@ -118,6 +128,18 @@ impl App {
                 .step(0.01)
                 .width(300);
             let info = text(format!("{}", self.noise_reduction)).width(100);
+
+            row![label, slider, info].spacing(10)
+        };
+
+        let derivative_cone = {
+            let label = text("Derivative Cone: ")
+                .align_x(Horizontal::Right)
+                .width(150);
+            let slider = slider(0.0..=10.0, self.derivative_cone, Message::DerivativeCone)
+                .step(0.01)
+                .width(300);
+            let info = text(format!("{}", self.derivative_cone)).width(100);
 
             row![label, slider, info].spacing(10)
         };
@@ -161,6 +183,7 @@ impl App {
             start_element,
             end_element,
             noise_reduction,
+            derivative_cone,
             horizontal_deviation,
             zoom_x,
             zoom_y
@@ -175,6 +198,13 @@ impl App {
         let subtract_blank = {
             let toggle = toggler(self.subtract_blank).on_toggle(Message::SubtractBlank);
             let label = text("Subtract blank");
+
+            row![toggle, label]
+        };
+
+        let show_derivative = {
+            let toggle = toggler(self.show_derivative).on_toggle(Message::ShowDerivate);
+            let label = text("Show derivative");
 
             row![toggle, label]
         };
@@ -212,7 +242,8 @@ impl App {
             column![header, data, blank, dex, standard]
         };
 
-        let options2 = column![unknown_lipid, subtract_blank, sample_type].width(250);
+        let options2 =
+            column![unknown_lipid, subtract_blank, show_derivative, sample_type].width(250);
 
         let ui = if let Some(handle) = self.sample_handle {
             let header = text(format!("Sample {}", handle));
@@ -243,7 +274,9 @@ impl App {
             let table = sample.into_table_element().map(Message::from);
 
             let footer = row![options, options2, table].height(300);
-            let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::default()));
+            let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ));
             let chart: Element<()> = ChartWidget::new(sample.clone())
                 .height(Length::Fill)
                 .width(Length::Fill)
@@ -253,7 +286,9 @@ impl App {
             column![header, body, scroll_footer]
         } else {
             let footer = row![options, options2].height(250);
-            let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::default()));
+            let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ));
             column![scroll_footer]
         };
 
@@ -286,11 +321,13 @@ impl App {
                     let content = crate::parse_file(&path, crate::parse_line_as_data);
                     let mut sample = Chromatography::default();
                     sample.title = crate::parse_header(&path);
+                    sample.show_derivative = self.show_derivative;
                     sample.set_data(content);
                     sample.set_data_range(self.chart_start..self.chart_end);
                     sample.set_lipid_master_table(self.lipid_reference.clone());
                     sample.set_include_unknowns(self.include_unknowns);
                     sample.set_noise_reduction(self.noise_reduction);
+                    sample.set_derivative_cone(self.derivative_cone);
                     sample.set_horizontal_deviation(self.horizontal_deviation);
                     self.samples.push(sample);
                 }
@@ -366,6 +403,14 @@ impl App {
 
                 Task::none()
             }
+            Message::DerivativeCone(value) => {
+                self.derivative_cone = value;
+                for sample in self.samples.iter_mut() {
+                    sample.set_derivative_cone(value);
+                }
+
+                Task::none()
+            }
             Message::HorizontalDeviation(value) => {
                 self.horizontal_deviation = value;
                 for sample in self.samples.iter_mut() {
@@ -392,6 +437,14 @@ impl App {
                     }
 
                     sample.set_subtract_blank(value);
+                }
+
+                Task::none()
+            }
+            Message::ShowDerivate(show) => {
+                self.show_derivative = show;
+                for sample in self.samples.iter_mut() {
+                    sample.show_derivative = show;
                 }
 
                 Task::none()
@@ -495,7 +548,7 @@ impl App {
                 let retention_time = sample
                     .lipids
                     .get(i)
-                    .map_or(0.0, |peak| peak.turning_point.x());
+                    .map_or(0.0, |peak| peak.retention_point.x());
                 content.push_str(&format!(",{}", retention_time));
             }
         }
@@ -539,7 +592,7 @@ impl App {
         content.push_str("\nSample,Retention Time (m),Area\n");
         for (index, sample) in self.samples.iter().enumerate() {
             for peak in sample.peaks.iter().filter(|peak| peak.lipid.is_none()) {
-                let entry = format!("{},{},{}\n", index, peak.turning_point.x(), peak.area);
+                let entry = format!("{},{},{}\n", index, peak.retention_point.x(), peak.area);
                 content.push_str(&entry);
             }
         }

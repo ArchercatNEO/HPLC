@@ -6,49 +6,68 @@ use plotters::{
 use crate::vector::*;
 
 #[derive(Clone, Debug, Default)]
+pub enum PeakType {
+    #[default]
+    Standard,
+    Shoulder,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct Peak {
     pub start: Point2D,
-    pub turning_point: Point2D,
+    pub retention_point: Point2D,
     pub end: Point2D,
+    pub height: f32,
     pub area: f32,
     pub concentration: f32,
     pub lipid: Option<String>,
+    pub peak_type: PeakType,
 }
 
 impl<'a> PointCollection<'a, Point2D> for &'a Peak {
     type Point = &'a Point2D;
-    type IntoIter = [&'a Point2D; 3];
+    type IntoIter = [&'a Point2D; 2];
 
     fn point_iter(self) -> Self::IntoIter {
-        [&self.start, &self.turning_point, &self.end]
+        [&self.start, &self.retention_point]
     }
 }
 
 impl<DB: DrawingBackend> Drawable<DB> for Peak {
     fn draw<I: Iterator<Item = (i32, i32)>>(
         &self,
-        pos: I,
+        mut pos: I,
         backend: &mut DB,
         parent_dim: (u32, u32),
     ) -> Result<
         (),
         plotters_iced::plotters_backend::DrawingErrorKind<<DB as DrawingBackend>::ErrorType>,
     > {
-        let mut which = 0;
-        for point in pos {
-            backend.draw_circle(point, 5, &BLUE, true)?;
+        match self.peak_type {
+            PeakType::Standard => {
+                backend.draw_circle(pos.next().unwrap(), 5, &BLUE, true)?;
 
-            if which == 1 {
+                let retention = pos.next().unwrap();
                 let text = self.lipid.as_ref().map_or("Unknown", |label| &label);
 
                 backend.draw_text(
-                    text,
+                    &text,
                     &("sans-serif", 10).into_text_style(&parent_dim),
-                    point,
+                    retention,
                 )?;
+                backend.draw_circle(retention, 5, &GREEN, true)?;
             }
+            PeakType::Shoulder => {
+                let retention = pos.next().unwrap();
+                let text = self.lipid.as_ref().map_or("Unknown", |label| &label);
 
-            which += 1;
+                backend.draw_text(
+                    &text,
+                    &("sans-serif", 10).into_text_style(&parent_dim),
+                    retention,
+                )?;
+                backend.draw_circle(retention, 5, &RED, true)?;
+            }
         }
 
         Ok(())
