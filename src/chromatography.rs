@@ -4,7 +4,7 @@ use std::ops::Range;
 use iced::color;
 use iced::widget::{container, row, scrollable, text};
 use iced::{Element, Point, widget::column};
-use plotters::style::{BLACK, YELLOW};
+use plotters::style::BLACK;
 
 use crate::peak::{Peak, PeakType};
 use crate::vector::*;
@@ -32,12 +32,12 @@ pub struct Chromatography {
     include_unknowns: bool,
     height_requirement: f32,
     derivative_cone: f32,
+    inflection_requirement: f32,
     horizontal_deviation: f32,
     sample_type: SampleType,
 
     subtract_blank: bool,
     blank_data: Option<Vec<Point2D>>,
-    //dex_mapper: Box<dyn Fn(f32) -> f32>,
     standard_peak: Option<Peak>,
 
     pub total_area: f32,
@@ -54,6 +54,7 @@ impl Chromatography {
         if let Some(range) = &self.data_range {
             let cloned = self.data.to_vec().into_iter();
             let filtered = cloned.filter(|point| range.start < point.x() && point.x() < range.end);
+
             if self.subtract_blank {
                 if let Some(blank) = &self.blank_data {
                     let data = filtered
@@ -63,7 +64,9 @@ impl Chromatography {
                     return data;
                 }
             }
-            filtered.collect()
+
+            let vec = filtered.collect();
+            Self::mean_filter(vec, 5)
         } else {
             self.data.to_vec()
         }
@@ -71,8 +74,8 @@ impl Chromatography {
 
     pub fn set_data(&mut self, value: Vec<Point2D>) -> &mut Self {
         self.data = value;
-        self.first_derivative = self.calculate_derivative(&self.get_data());
-        self.second_derivative = self.calculate_derivative(&self.first_derivative);
+        self.first_derivative = Self::calculate_derivative(&self.get_data());
+        self.second_derivative = Self::calculate_derivative(&self.first_derivative);
         self.baseline = self.calculate_baseline();
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
@@ -95,8 +98,8 @@ impl Chromatography {
     /// Setting this will crop the raw data for the purposes of the baseline and peaks
     pub fn set_data_range(&mut self, value: Range<f32>) -> &mut Self {
         self.data_range = Some(value);
-        self.first_derivative = self.calculate_derivative(&self.get_data());
-        self.second_derivative = self.calculate_derivative(&self.first_derivative);
+        self.first_derivative = Self::calculate_derivative(&self.get_data());
+        self.second_derivative = Self::calculate_derivative(&self.first_derivative);
         self.baseline = self.calculate_baseline();
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
@@ -152,6 +155,14 @@ impl Chromatography {
         self
     }
 
+    pub fn set_inflection_requirement(&mut self, value: f32) -> &mut Self {
+        self.inflection_requirement = value;
+        self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
+
+        self
+    }
+
     pub fn set_horizontal_deviation(&mut self, value: f32) -> &mut Self {
         self.horizontal_deviation = value;
         self.lipids = self.label_peaks();
@@ -195,16 +206,36 @@ impl Chromatography {
         self
     }
 
-    fn calculate_derivative(&self, graph: &[Point2D]) -> Vec<Point2D> {
+    fn mean_filter(data: Vec<Point2D>, smoothing: isize) -> Vec<Point2D> {
+        let mut smoothed = Vec::with_capacity(data.len());
+
+        let isize_len = data.len() as isize;
+        for i in 0..isize_len {
+            let mut total = 0.0;
+            let start = isize::max(0, i - smoothing);
+            let end = isize::min(isize_len, i + smoothing);
+
+            for offset in start..end {
+                total += data[offset as usize].y();
+            }
+
+            let point = Point2D::new(data[i as usize].x(), total / (end - start) as f32);
+            smoothed.push(point);
+        }
+
+        smoothed
+    }
+
+    fn calculate_derivative(graph: &[Point2D]) -> Vec<Point2D> {
         if graph.len() < 2 {
             return vec![];
         }
 
         let mut derivative = Vec::with_capacity(graph.len());
 
-        for i in 1..graph.len() {
+        for i in 1..(graph.len() - 1) {
             let prev = &graph[i - 1];
-            let next = &graph[i];
+            let next = &graph[i + 1];
 
             let point = Point2D::new(prev.x(), prev.gradient(next));
             derivative.push(point);
@@ -271,7 +302,7 @@ impl Chromatography {
         let mut new_peak = true;
         let mut prev_min = data[0].y() - self.baseline[0].y();
 
-        for index in 3..data.len() {
+        for index in 4..(data.len() - 4) {
             let prev = &data[index - 1];
             let next = &data[index];
 
@@ -290,7 +321,7 @@ impl Chromatography {
             let prev_drv = &self.first_derivative[index - 2];
             let next_drv = &self.first_derivative[index - 1];
 
-            if prev_drv.y() < 0.0 && next_drv.y() > 0.0 {
+            if prev_drv.y() <= 0.0 && next_drv.y() >= 0.0 {
                 // Minimum
                 if new_peak {
                     // Real peak
@@ -320,7 +351,7 @@ impl Chromatography {
                     peak = Peak::default();
                     peak.start = prev.clone();
                 }
-            } else if prev_drv.y() > 0.0 && next_drv.y() < 0.0 {
+            } else if prev_drv.y() >= 0.0 && next_drv.y() <= 0.0 {
                 // Maximum
                 new_peak = height > self.height_requirement;
                 peak.retention_point = prev.clone();
@@ -330,23 +361,29 @@ impl Chromatography {
             let prev_drv2 = &self.second_derivative[index - 3];
             let next_drv2 = &self.second_derivative[index - 2];
 
-            let rising_zero = prev_drv2.y() < 0.0 && next_drv2.y() > 0.0;
+            let difference = f32::abs(prev_drv2.y() - next_drv2.y());
 
-            if rising_zero && prev_drv.y() > 0.0 && height > self.height_requirement {
+            if difference < self.inflection_requirement || height < self.height_requirement {
+                continue;
+            }
+
+            let rising_zero = prev_drv2.y() <= 0.0 && next_drv2.y() >= 0.0;
+
+            if rising_zero && prev_drv.y() >= 0.0 {
                 let mut shoulder = Peak::default();
-                shoulder.start = prev.clone();
+                shoulder.start = next.clone();
                 shoulder.retention_point = next.clone();
                 shoulder.peak_type = PeakType::Shoulder(BLACK);
 
                 result.push(shoulder);
             }
 
-            let falling_zero = prev_drv2.y() > 0.0 && next_drv2.y() < 0.0;
+            let falling_zero = prev_drv2.y() >= 0.0 && next_drv2.y() <= 0.0;
 
-            if falling_zero && prev_drv.y() < 0.0 {
+            if falling_zero && prev_drv.y() <= 0.0 {
                 let mut shoulder = Peak::default();
                 shoulder.start = prev.clone();
-                shoulder.retention_point = next.clone();
+                shoulder.retention_point = prev.clone();
                 shoulder.peak_type = PeakType::Shoulder(BLACK);
 
                 result.push(shoulder);

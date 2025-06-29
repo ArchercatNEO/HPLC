@@ -61,7 +61,7 @@ impl SliderInfo {
 
         let label = text(format!("{}: ", self.label))
             .align_x(Horizontal::Right)
-            .width(Length::FillPortion(2));
+            .width(Length::FillPortion(3));
 
         let bar = slider(self.start..=self.end, self.value, |float| {
             Some(SliderMessage::Value(float))
@@ -189,6 +189,7 @@ pub struct App {
     chart_end: SliderInfo,
     height_requirement: SliderInfo,
     derivative_cone: SliderInfo,
+    inflection_requirement: SliderInfo,
     horizontal_deviation: SliderInfo,
     include_unknowns: bool,
     subtract_blank: bool,
@@ -203,6 +204,7 @@ impl Default for App {
 
         let height_requirement = SliderInfo::new(0.3, 0.0, 1.0, 0.01, "Height Requirement");
         let derivative_cone = SliderInfo::new(0.5, 0.0, 10.0, 0.1, "Derivative Cone");
+        let inflection_requirement = SliderInfo::new(0.0, 0.0, 10.0, 1.0, "Inflection Requirement");
         let horizontal_deviation = SliderInfo::new(0.2, 0.0, 1.0, 0.01, "Horizontal Deviation");
 
         Self {
@@ -216,6 +218,7 @@ impl Default for App {
             chart_end,
             height_requirement,
             derivative_cone,
+            inflection_requirement,
             horizontal_deviation,
             include_unknowns: false,
             subtract_blank: false,
@@ -238,6 +241,7 @@ pub enum Message {
     ChartEnd(SliderMessage),
     HeightRequirement(SliderMessage),
     DerivativeCone(SliderMessage),
+    InflectionRequirement(SliderMessage),
     HorizontalDeviation(SliderMessage),
     ShowUnknowns(bool),
     SubtractBlank(bool),
@@ -283,6 +287,11 @@ impl App {
             .view()
             .map(|msg| msg.map_or(Message::Done, Message::DerivativeCone));
 
+        let inflection_requirement = self
+            .inflection_requirement
+            .view()
+            .map(|msg| msg.map_or(Message::Done, Message::InflectionRequirement));
+
         let horizontal_deviation = self
             .horizontal_deviation
             .view()
@@ -312,6 +321,7 @@ impl App {
             chart_end,
             height_requirement,
             derivative_cone,
+            inflection_requirement,
             horizontal_deviation,
             zoom_x,
             zoom_y
@@ -445,8 +455,8 @@ impl App {
                     }
                 })
             }
-            Message::DataLoad(data) => {
-                for path in data {
+            Message::DataLoad(paths) => {
+                for path in paths {
                     let content = crate::parse_file(&path, crate::parse_line_as_data);
                     let mut sample = Chromatography::default();
                     sample.title = crate::parse_header(&path);
@@ -566,6 +576,19 @@ impl App {
                 if prev_value != self.derivative_cone.value {
                     for sample in self.samples.iter_mut() {
                         sample.set_derivative_cone(self.derivative_cone.value);
+                    }
+                }
+
+                Task::none()
+            }
+            Message::InflectionRequirement(message) => {
+                let prev_value = self.inflection_requirement.value;
+
+                self.inflection_requirement.update(message);
+
+                if prev_value != self.inflection_requirement.value {
+                    for sample in self.samples.iter_mut() {
+                        sample.set_inflection_requirement(self.inflection_requirement.value);
                     }
                 }
 
