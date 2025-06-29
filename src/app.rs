@@ -1,11 +1,10 @@
 use std::fs;
-use std::ops::Range;
 use std::path::PathBuf;
 
 use iced::{
     Element, Length, Point, Task,
-    alignment::Horizontal,
-    widget::{button, column, radio, row, scrollable, slider, text, toggler},
+    alignment::{Horizontal, Vertical},
+    widget::{button, column, radio, row, scrollable, slider, text, text_input, toggler},
 };
 use plotters_iced::ChartWidget;
 
@@ -13,6 +12,170 @@ use crate::{
     chromatography::{Chromatography, SampleType},
     vector::*,
 };
+
+#[derive(Clone, Debug)]
+pub enum SliderMessage {
+    Value(f32),
+    ValueStr(String),
+    Start(String),
+    End(String),
+    Step(String),
+    Compact(bool),
+}
+
+//TODO: support exponential sliders
+#[derive(Clone, Debug)]
+struct SliderInfo {
+    pub value: f32,
+    start: f32,
+    end: f32,
+    step: f32,
+    label: &'static str,
+    pub value_str: String,
+    start_str: String,
+    end_str: String,
+    step_str: String,
+    expanded: bool,
+}
+
+impl SliderInfo {
+    pub fn new(value: f32, start: f32, end: f32, step: f32, label: &'static str) -> Self {
+        Self {
+            value,
+            start,
+            end,
+            step,
+            label,
+            value_str: value.to_string(),
+            start_str: start.to_string(),
+            end_str: end.to_string(),
+            step_str: step.to_string(),
+            expanded: false,
+        }
+    }
+
+    pub fn view(&self) -> Element<Option<SliderMessage>> {
+        let number_width = Length::FillPortion(2);
+
+        let expanded = toggler(self.expanded).on_toggle(|bit| Some(SliderMessage::Compact(bit)));
+
+        let label = text(format!("{}: ", self.label))
+            .align_x(Horizontal::Right)
+            .width(Length::FillPortion(2));
+
+        let bar = slider(self.start..=self.end, self.value, |float| {
+            Some(SliderMessage::Value(float))
+        })
+        .step(self.step)
+        .width(Length::FillPortion(5));
+
+        if self.expanded {
+            let value = {
+                let input = text_input(&self.value_str, &self.value_str)
+                    .width(number_width)
+                    .on_input(Self::wrap_parse(SliderMessage::ValueStr));
+
+                row![label, input].align_y(Vertical::Center)
+            };
+
+            let range = {
+                let label = text(": ");
+
+                let start = text_input(&self.start_str, &self.start_str)
+                    .width(number_width)
+                    .on_input(Self::wrap_parse(SliderMessage::Start));
+
+                let inequality = text("<= x <= ");
+
+                let end = text_input(&self.end_str, &self.end_str)
+                    .width(number_width)
+                    .on_input(Self::wrap_parse(SliderMessage::End));
+
+                row![label, start, inequality, end]
+                    .spacing(5)
+                    .align_y(Vertical::Center)
+            };
+
+            let step = {
+                let label = text(": Step: ");
+                let input = text_input(&self.step_str, &self.step_str)
+                    .width(number_width)
+                    .on_input(Self::wrap_parse(SliderMessage::Step));
+
+                row![label, input].align_y(Vertical::Center)
+            };
+
+            let top = row![expanded, value, range, step].spacing(10);
+
+            let el = column![top, bar];
+            el.into()
+        } else {
+            let info = text(&self.value_str).width(number_width);
+
+            row![expanded, label, bar, info].spacing(10).into()
+        }
+    }
+
+    pub fn update(&mut self, message: SliderMessage) {
+        match message {
+            SliderMessage::Value(value) => {
+                self.value = value;
+                self.value_str = value.to_string();
+            }
+            SliderMessage::ValueStr(content) => {
+                if let Ok(float) = content.parse::<f32>() {
+                    self.value = float;
+                }
+
+                self.value_str = content;
+            }
+            SliderMessage::Start(content) => {
+                if let Ok(float) = content.parse::<f32>() {
+                    self.start = float;
+                }
+
+                self.start_str = content;
+            }
+            SliderMessage::End(content) => {
+                if let Ok(float) = content.parse::<f32>() {
+                    self.end = float;
+                }
+
+                self.end_str = content;
+            }
+            SliderMessage::Step(content) => {
+                if let Ok(float) = content.parse::<f32>() {
+                    self.step = float;
+                }
+
+                self.step_str = content;
+            }
+            SliderMessage::Compact(expanded) => {
+                self.expanded = expanded;
+            }
+        }
+    }
+
+    fn wrap_parse<F: Fn(String) -> SliderMessage>(
+        enum_fn: F,
+    ) -> impl Fn(String) -> Option<SliderMessage> {
+        move |content: String| {
+            let mut numeric = true;
+            for character in content.chars() {
+                if !character.is_ascii_digit() && character != '.' {
+                    numeric = false;
+                    break;
+                }
+            }
+
+            if numeric {
+                Some(enum_fn(content))
+            } else {
+                None
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct App {
@@ -22,11 +185,11 @@ pub struct App {
     blank_handle: Option<usize>,
     dex_handle: Option<usize>,
     standard_handle: Option<usize>,
-    chart_start: f32,
-    chart_end: f32,
-    noise_reduction: f32,
-    derivative_cone: f32,
-    horizontal_deviation: f32,
+    chart_start: SliderInfo,
+    chart_end: SliderInfo,
+    height_requirement: SliderInfo,
+    derivative_cone: SliderInfo,
+    horizontal_deviation: SliderInfo,
     include_unknowns: bool,
     subtract_blank: bool,
     show_derivative: bool,
@@ -35,6 +198,13 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
+        let chart_start = SliderInfo::new(8.5, 0.0, 60.0, 0.5, "Chart Start");
+        let chart_end = SliderInfo::new(33.5, 0.0, 60.0, 0.5, "Chart End");
+
+        let height_requirement = SliderInfo::new(0.3, 0.0, 1.0, 0.01, "Height Requirement");
+        let derivative_cone = SliderInfo::new(0.5, 0.0, 10.0, 0.1, "Derivative Cone");
+        let horizontal_deviation = SliderInfo::new(0.2, 0.0, 1.0, 0.01, "Horizontal Deviation");
+
         Self {
             lipid_reference: vec![],
             samples: vec![],
@@ -42,11 +212,11 @@ impl Default for App {
             blank_handle: None,
             dex_handle: None,
             standard_handle: None,
-            chart_start: 9.0,
-            chart_end: 34.5,
-            noise_reduction: 0.3,
-            derivative_cone: 0.5,
-            horizontal_deviation: 0.5,
+            chart_start,
+            chart_end,
+            height_requirement,
+            derivative_cone,
+            horizontal_deviation,
             include_unknowns: false,
             subtract_blank: false,
             show_derivative: false,
@@ -64,10 +234,11 @@ pub enum Message {
     ReferenceLoad(Vec<(f32, String)>),
     ExportFile,
     ExportFileContent(PathBuf),
-    ChartRange(Range<f32>),
-    NoiseReduction(f32),
-    DerivativeCone(f32),
-    HorizontalDeviation(f32),
+    ChartStart(SliderMessage),
+    ChartEnd(SliderMessage),
+    HeightRequirement(SliderMessage),
+    DerivativeCone(SliderMessage),
+    HorizontalDeviation(SliderMessage),
     ShowUnknowns(bool),
     SubtractBlank(bool),
     ShowDerivate(bool),
@@ -92,73 +263,30 @@ impl App {
 
         let export_file = button("Export Table").on_press(Message::ExportFile);
 
-        //let file_tab = pick_list(options, selected, on_selected);
+        let chart_start = self
+            .chart_start
+            .view()
+            .map(|msg| msg.map_or(Message::Done, Message::ChartStart));
 
-        let start_element = {
-            let start_label = text("Chart Start: ").align_x(Horizontal::Right).width(150);
-            let start_slider = slider(0.0..=60.0, self.chart_start, |start| {
-                let clamped = start.min(self.chart_end);
-                Message::ChartRange(clamped..self.chart_end)
-            })
-            .step(0.5)
-            .width(300);
-            let start_info = text(format!("{}", self.chart_start)).width(100);
+        let chart_end = self
+            .chart_end
+            .view()
+            .map(|msg| msg.map_or(Message::Done, Message::ChartEnd));
 
-            row![start_label, start_slider, start_info].spacing(10)
-        };
+        let height_requirement = self
+            .height_requirement
+            .view()
+            .map(|msg| msg.map_or(Message::Done, Message::HeightRequirement));
 
-        let end_element = {
-            let end_label = text("Chart End: ").align_x(Horizontal::Right).width(150);
-            let end_slider = slider(0.0..=60.0, self.chart_end, |end| {
-                let clamped = end.max(self.chart_start);
-                Message::ChartRange(self.chart_start..clamped)
-            })
-            .step(0.5)
-            .width(300);
-            let end_info = text(format!("{}", self.chart_end)).width(100);
+        let derivative_cone = self
+            .derivative_cone
+            .view()
+            .map(|msg| msg.map_or(Message::Done, Message::DerivativeCone));
 
-            row![end_label, end_slider, end_info].spacing(10)
-        };
-
-        let noise_reduction = {
-            let label = text("Noise Reduction: ")
-                .align_x(Horizontal::Right)
-                .width(150);
-            let slider = slider(0.3..=0.6, self.noise_reduction, Message::NoiseReduction)
-                .step(0.01)
-                .width(300);
-            let info = text(format!("{}", self.noise_reduction)).width(100);
-
-            row![label, slider, info].spacing(10)
-        };
-
-        let derivative_cone = {
-            let label = text("Derivative Cone: ")
-                .align_x(Horizontal::Right)
-                .width(150);
-            let slider = slider(0.0..=10.0, self.derivative_cone, Message::DerivativeCone)
-                .step(0.01)
-                .width(300);
-            let info = text(format!("{}", self.derivative_cone)).width(100);
-
-            row![label, slider, info].spacing(10)
-        };
-
-        let horizontal_deviation = {
-            let label = text("Horizontal Deviation: ")
-                .align_x(Horizontal::Right)
-                .width(150);
-            let slider = slider(
-                0.0..=10.0,
-                self.horizontal_deviation,
-                Message::HorizontalDeviation,
-            )
-            .step(0.1)
-            .width(300);
-            let info = text(format!("{}", self.horizontal_deviation)).width(100);
-
-            row![label, slider, info].spacing(10)
-        };
+        let horizontal_deviation = self
+            .horizontal_deviation
+            .view()
+            .map(|msg| msg.map_or(Message::Done, Message::HorizontalDeviation));
 
         let zoom_x = {
             let label = text("Zoom X: ").align_x(Horizontal::Right).width(150);
@@ -180,14 +308,15 @@ impl App {
             load_data_file,
             load_reference_file,
             export_file,
-            start_element,
-            end_element,
-            noise_reduction,
+            chart_start,
+            chart_end,
+            height_requirement,
             derivative_cone,
             horizontal_deviation,
             zoom_x,
             zoom_y
-        ];
+        ]
+        .width(700);
 
         let unknown_lipid = {
             let toggle = toggler(self.include_unknowns).on_toggle(Message::ShowUnknowns);
@@ -273,7 +402,7 @@ impl App {
             let sample = &self.samples[handle];
             let table = sample.into_table_element().map(Message::from);
 
-            let footer = row![options, options2, table].height(300);
+            let footer = row![options, options2, table];
             let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(
                 scrollable::Scrollbar::default(),
             ));
@@ -285,7 +414,7 @@ impl App {
             let body = row![tabs, chart.map(Message::from)];
             column![header, body, scroll_footer]
         } else {
-            let footer = row![options, options2].height(250);
+            let footer = row![options, options2];
             let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(
                 scrollable::Scrollbar::default(),
             ));
@@ -323,12 +452,12 @@ impl App {
                     sample.title = crate::parse_header(&path);
                     sample.show_derivative = self.show_derivative;
                     sample.set_data(content);
-                    sample.set_data_range(self.chart_start..self.chart_end);
+                    sample.set_data_range(self.chart_start.value..self.chart_end.value);
                     sample.set_lipid_master_table(self.lipid_reference.clone());
                     sample.set_include_unknowns(self.include_unknowns);
-                    sample.set_noise_reduction(self.noise_reduction);
-                    sample.set_derivative_cone(self.derivative_cone);
-                    sample.set_horizontal_deviation(self.horizontal_deviation);
+                    sample.set_height_requirement(self.height_requirement.value);
+                    sample.set_derivative_cone(self.derivative_cone.value);
+                    sample.set_horizontal_deviation(self.horizontal_deviation.value);
                     self.samples.push(sample);
                 }
 
@@ -386,35 +515,71 @@ impl App {
 
                 Task::none()
             }
-            Message::ChartRange(range) => {
-                self.chart_start = range.start;
-                self.chart_end = range.end;
-                for sample in self.samples.iter_mut() {
-                    sample.set_data_range(range.clone());
+            Message::ChartStart(message) => {
+                let prev_value = self.chart_start.value;
+
+                self.chart_start.update(message);
+                self.chart_start.value = f32::min(self.chart_start.value, self.chart_end.value);
+                self.chart_start.value_str = self.chart_start.value.to_string();
+
+                if prev_value != self.chart_start.value {
+                    for sample in self.samples.iter_mut() {
+                        sample.set_data_range(self.chart_start.value..self.chart_end.value);
+                    }
                 }
 
                 Task::none()
             }
-            Message::NoiseReduction(value) => {
-                self.noise_reduction = value;
-                for sample in self.samples.iter_mut() {
-                    sample.set_noise_reduction(value);
+            Message::ChartEnd(message) => {
+                let prev_value = self.chart_end.value;
+
+                self.chart_end.update(message);
+                self.chart_end.value = f32::max(self.chart_end.value, self.chart_start.value);
+                self.chart_end.value_str = self.chart_end.value.to_string();
+
+                if prev_value != self.chart_end.value {
+                    for sample in self.samples.iter_mut() {
+                        sample.set_data_range(self.chart_end.value..self.chart_end.value);
+                    }
                 }
 
                 Task::none()
             }
-            Message::DerivativeCone(value) => {
-                self.derivative_cone = value;
-                for sample in self.samples.iter_mut() {
-                    sample.set_derivative_cone(value);
+            Message::HeightRequirement(message) => {
+                let prev_value = self.height_requirement.value;
+
+                self.height_requirement.update(message);
+
+                if prev_value != self.height_requirement.value {
+                    for sample in self.samples.iter_mut() {
+                        sample.set_height_requirement(self.height_requirement.value);
+                    }
                 }
 
                 Task::none()
             }
-            Message::HorizontalDeviation(value) => {
-                self.horizontal_deviation = value;
-                for sample in self.samples.iter_mut() {
-                    sample.set_horizontal_deviation(value);
+            Message::DerivativeCone(message) => {
+                let prev_value = self.derivative_cone.value;
+
+                self.derivative_cone.update(message);
+
+                if prev_value != self.derivative_cone.value {
+                    for sample in self.samples.iter_mut() {
+                        sample.set_derivative_cone(self.derivative_cone.value);
+                    }
+                }
+
+                Task::none()
+            }
+            Message::HorizontalDeviation(message) => {
+                let prev_value = self.horizontal_deviation.value;
+
+                self.horizontal_deviation.update(message);
+
+                if prev_value != self.horizontal_deviation.value {
+                    for sample in self.samples.iter_mut() {
+                        sample.set_horizontal_deviation(self.horizontal_deviation.value);
+                    }
                 }
 
                 Task::none()

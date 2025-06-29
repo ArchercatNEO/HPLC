@@ -29,7 +29,7 @@ pub struct Chromatography {
 
     data_range: Option<Range<f32>>,
     include_unknowns: bool,
-    noise_reduction: f32,
+    height_requirement: f32,
     derivative_cone: f32,
     horizontal_deviation: f32,
     sample_type: SampleType,
@@ -135,8 +135,8 @@ impl Chromatography {
         self
     }
 
-    pub fn set_noise_reduction(&mut self, value: f32) -> &mut Self {
-        self.noise_reduction = value;
+    pub fn set_height_requirement(&mut self, value: f32) -> &mut Self {
+        self.height_requirement = value;
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
@@ -288,7 +288,7 @@ impl Chromatography {
 
             if prev_drv.y() < 0.0 && next_drv.y() > 0.0 {
                 // Minimum
-                if peak.height > self.noise_reduction {
+                if peak.height > self.height_requirement {
                     // Real peak
                     peak.end = prev.clone();
                     if let Some(standard) = &self.standard_peak {
@@ -324,7 +324,7 @@ impl Chromatography {
 
             if (rising_zero || falling_zero)
                 && f32::abs(prev_drv.y()) < self.derivative_cone
-                && height > self.noise_reduction
+                && height > self.height_requirement
             {
                 // Shoulder
                 peak.peak_type = PeakType::Shoulder;
