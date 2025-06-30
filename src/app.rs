@@ -412,7 +412,7 @@ impl App {
             let sample = &self.samples[handle];
             let table = sample.into_table_element().map(Message::from);
 
-            let footer = row![options, options2, table];
+            let footer = row![options, options2, table].height(500);
             let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(
                 scrollable::Scrollbar::default(),
             ));
@@ -706,7 +706,7 @@ impl App {
                             }
 
                             self.standard_handle = Some(handle);
-                            let peak = self.samples[handle].peaks[0].clone();
+                            let peak = self.samples[handle].peaks[1].clone();
                             for sample in self.samples.iter_mut() {
                                 sample.set_standard_peak(Some(peak.clone()));
                             }

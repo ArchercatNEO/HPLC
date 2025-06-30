@@ -370,23 +370,33 @@ impl Chromatography {
             let rising_zero = prev_drv2.y() <= 0.0 && next_drv2.y() >= 0.0;
 
             if rising_zero && prev_drv.y() >= 0.0 {
-                let mut shoulder = Peak::default();
-                shoulder.start = next.clone();
-                shoulder.retention_point = next.clone();
-                shoulder.peak_type = PeakType::Shoulder(BLACK);
-
-                result.push(shoulder);
+                peak.peak_type = PeakType::Shoulder(BLACK);
+                peak.retention_point = next.clone();
+                peak.end = next.clone();
+                if let Some(standard) = &self.standard_peak {
+                    peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
+                }
+                
+                result.push(peak);
+                
+                peak = Peak::default();
+                peak.start = next.clone();
             }
 
             let falling_zero = prev_drv2.y() >= 0.0 && next_drv2.y() <= 0.0;
 
             if falling_zero && prev_drv.y() <= 0.0 {
-                let mut shoulder = Peak::default();
-                shoulder.start = prev.clone();
-                shoulder.retention_point = prev.clone();
-                shoulder.peak_type = PeakType::Shoulder(BLACK);
-
-                result.push(shoulder);
+                peak.end = next.clone();
+                if let Some(standard) = &self.standard_peak {
+                    peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
+                }
+                
+                result.push(peak);
+                
+                peak = Peak::default();
+                peak.start = next.clone();
+                peak.retention_point = next.clone();
+                peak.peak_type = PeakType::Shoulder(BLACK);
             }
         }
 

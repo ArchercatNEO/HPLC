@@ -64,6 +64,13 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
 
                 backend.draw_circle(start, 3, &color, true)?;
                 backend.draw_circle(retention, 3, &color, true)?;
+
+                let text = self.lipid.as_ref().map_or("Unknown", |label| &label);
+                backend.draw_text(
+                    &text,
+                    &("sans-serif", 10).into_text_style(&parent_dim),
+                    retention,
+                )?;
             }
             PeakType::Reference => {
                 let retention = pos.next().unwrap();
