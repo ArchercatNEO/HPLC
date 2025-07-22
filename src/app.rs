@@ -10,6 +10,8 @@ use plotters_iced::ChartWidget;
 
 use crate::{
     chromatography::{Chromatography, SampleType},
+    cubic::Cubic,
+    reference::Reference,
     vector::*,
 };
 
@@ -116,18 +118,26 @@ impl SliderInfo {
         }
     }
 
-    pub fn update(&mut self, message: SliderMessage) {
+    pub fn update(&mut self, message: SliderMessage) -> Option<f32> {
         match message {
             SliderMessage::Value(value) => {
-                self.value = value;
-                self.value_str = value.to_string();
+                if self.value != value {
+                    self.value = value;
+                    self.value_str = value.to_string();
+                    Some(value)
+                } else {
+                    None
+                }
             }
             SliderMessage::ValueStr(content) => {
-                if let Ok(float) = content.parse::<f32>() {
-                    self.value = float;
-                }
-
                 self.value_str = content;
+
+                if let Ok(float) = self.value_str.parse::<f32>() {
+                    self.value = float;
+                    Some(float)
+                } else {
+                    None
+                }
             }
             SliderMessage::Start(content) => {
                 if let Ok(float) = content.parse::<f32>() {
@@ -135,6 +145,7 @@ impl SliderInfo {
                 }
 
                 self.start_str = content;
+                None
             }
             SliderMessage::End(content) => {
                 if let Ok(float) = content.parse::<f32>() {
@@ -142,6 +153,7 @@ impl SliderInfo {
                 }
 
                 self.end_str = content;
+                None
             }
             SliderMessage::Step(content) => {
                 if let Ok(float) = content.parse::<f32>() {
@@ -149,9 +161,11 @@ impl SliderInfo {
                 }
 
                 self.step_str = content;
+                None
             }
             SliderMessage::Compact(expanded) => {
                 self.expanded = expanded;
+                None
             }
         }
     }
@@ -179,7 +193,7 @@ impl SliderInfo {
 
 #[derive(Debug)]
 pub struct App {
-    lipid_reference: Vec<(f32, String)>,
+    lipid_reference: Vec<Reference>,
     samples: Vec<Chromatography>,
     sample_handle: Option<usize>,
     blank_handle: Option<usize>,
@@ -188,9 +202,10 @@ pub struct App {
     chart_start: SliderInfo,
     chart_end: SliderInfo,
     height_requirement: SliderInfo,
-    derivative_cone: SliderInfo,
     inflection_requirement: SliderInfo,
-    horizontal_deviation: SliderInfo,
+    retention_time_tolerance: SliderInfo,
+    glucose_unit_tolerance: SliderInfo,
+    glucose_transformer: Option<Cubic>,
     include_unknowns: bool,
     subtract_blank: bool,
     show_derivative: bool,
@@ -199,14 +214,6 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let chart_start = SliderInfo::new(8.5, 0.0, 60.0, 0.5, "Chart Start");
-        let chart_end = SliderInfo::new(33.5, 0.0, 60.0, 0.5, "Chart End");
-
-        let height_requirement = SliderInfo::new(0.3, 0.0, 1.0, 0.01, "Height Requirement");
-        let derivative_cone = SliderInfo::new(0.5, 0.0, 10.0, 0.1, "Derivative Cone");
-        let inflection_requirement = SliderInfo::new(0.0, 0.0, 10.0, 1.0, "Inflection Requirement");
-        let horizontal_deviation = SliderInfo::new(0.2, 0.0, 1.0, 0.01, "Horizontal Deviation");
-
         Self {
             lipid_reference: vec![],
             samples: vec![],
@@ -214,12 +221,19 @@ impl Default for App {
             blank_handle: None,
             dex_handle: None,
             standard_handle: None,
-            chart_start,
-            chart_end,
-            height_requirement,
-            derivative_cone,
-            inflection_requirement,
-            horizontal_deviation,
+            chart_start: SliderInfo::new(8.5, 0.0, 60.0, 0.5, "Chart Start"),
+            chart_end: SliderInfo::new(36.5, 0.0, 60.0, 0.5, "Chart End"),
+            height_requirement: SliderInfo::new(0.3, 0.0, 1.0, 0.01, "Height Requirement"),
+            inflection_requirement: SliderInfo::new(0.0, 0.0, 10.0, 1.0, "Inflection Requirement"),
+            retention_time_tolerance: SliderInfo::new(
+                0.2,
+                0.0,
+                1.0,
+                0.01,
+                "Retention Time Tolerance",
+            ),
+            glucose_unit_tolerance: SliderInfo::new(0.02, 0.0, 1.0, 0.01, "Glucose Unit Tolerance"),
+            glucose_transformer: None,
             include_unknowns: false,
             subtract_blank: false,
             show_derivative: false,
@@ -234,15 +248,15 @@ pub enum Message {
     DataFile,
     DataLoad(Vec<PathBuf>),
     ReferenceFile,
-    ReferenceLoad(Vec<(f32, String)>),
+    ReferenceLoad(Vec<Reference>),
     ExportFile,
     ExportFileContent(PathBuf),
     ChartStart(SliderMessage),
     ChartEnd(SliderMessage),
     HeightRequirement(SliderMessage),
-    DerivativeCone(SliderMessage),
     InflectionRequirement(SliderMessage),
-    HorizontalDeviation(SliderMessage),
+    RetentionTimeTolerance(SliderMessage),
+    GlucoseUnitTolerance(SliderMessage),
     ShowUnknowns(bool),
     SubtractBlank(bool),
     ShowDerivate(bool),
@@ -282,20 +296,20 @@ impl App {
             .view()
             .map(|msg| msg.map_or(Message::Done, Message::HeightRequirement));
 
-        let derivative_cone = self
-            .derivative_cone
-            .view()
-            .map(|msg| msg.map_or(Message::Done, Message::DerivativeCone));
-
         let inflection_requirement = self
             .inflection_requirement
             .view()
             .map(|msg| msg.map_or(Message::Done, Message::InflectionRequirement));
 
-        let horizontal_deviation = self
-            .horizontal_deviation
+        let retention_time_tolerance = self
+            .retention_time_tolerance
             .view()
-            .map(|msg| msg.map_or(Message::Done, Message::HorizontalDeviation));
+            .map(|msg| msg.map_or(Message::Done, Message::RetentionTimeTolerance));
+
+        let glucose_unit_tolerance = self
+            .glucose_unit_tolerance
+            .view()
+            .map(|msg| msg.map_or(Message::Done, Message::GlucoseUnitTolerance));
 
         let zoom_x = {
             let label = text("Zoom X: ").align_x(Horizontal::Right).width(150);
@@ -320,9 +334,9 @@ impl App {
             chart_start,
             chart_end,
             height_requirement,
-            derivative_cone,
             inflection_requirement,
-            horizontal_deviation,
+            retention_time_tolerance,
+            glucose_unit_tolerance,
             zoom_x,
             zoom_y
         ]
@@ -412,17 +426,11 @@ impl App {
             let sample = &self.samples[handle];
             let table = sample.into_table_element().map(Message::from);
 
-            let footer = row![options, options2, table].height(500);
-            let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::default(),
-            ));
-            let chart: Element<()> = ChartWidget::new(sample.clone())
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .into();
+            let footer = row![options, options2];
+            let chart: Element<()> = ChartWidget::new(sample.clone()).width(Length::Fill).into();
 
             let body = row![tabs, chart.map(Message::from)];
-            column![header, body, scroll_footer]
+            column![header, body, footer, table]
         } else {
             let footer = row![options, options2];
             let scroll_footer = scrollable(footer).direction(scrollable::Direction::Horizontal(
@@ -466,8 +474,9 @@ impl App {
                     sample.set_lipid_master_table(self.lipid_reference.clone());
                     sample.set_include_unknowns(self.include_unknowns);
                     sample.set_height_requirement(self.height_requirement.value);
-                    sample.set_derivative_cone(self.derivative_cone.value);
-                    sample.set_horizontal_deviation(self.horizontal_deviation.value);
+                    sample.set_retention_time_tolerance(self.retention_time_tolerance.value);
+                    sample.set_glucose_unit_tolerance(self.glucose_unit_tolerance.value);
+                    sample.set_glucose_transformer(self.glucose_transformer);
                     self.samples.push(sample);
                 }
 
@@ -482,9 +491,8 @@ impl App {
 
                 Task::perform(task, |maybe_handle| {
                     if let Some(handle) = maybe_handle {
-                        //TODO: display loaded file path
                         let path = handle.path();
-                        let data = crate::parse_file(&path, crate::parse_line_as_lipids);
+                        let data = Reference::parse_file(&path);
 
                         Message::ReferenceLoad(data)
                     } else {
@@ -526,83 +534,51 @@ impl App {
                 Task::none()
             }
             Message::ChartStart(message) => {
-                let prev_value = self.chart_start.value;
+                if let Some(unbound) = self.chart_start.update(message) {
+                    let start = f32::min(unbound, self.chart_end.value);
+                    self.chart_start.update(SliderMessage::Value(start));
 
-                self.chart_start.update(message);
-                self.chart_start.value = f32::min(self.chart_start.value, self.chart_end.value);
-                self.chart_start.value_str = self.chart_start.value.to_string();
-
-                if prev_value != self.chart_start.value {
-                    for sample in self.samples.iter_mut() {
-                        sample.set_data_range(self.chart_start.value..self.chart_end.value);
-                    }
+                    let range = start..self.chart_end.value;
+                    self.update_parameter(&Chromatography::set_data_range, range);
                 }
 
                 Task::none()
             }
             Message::ChartEnd(message) => {
-                let prev_value = self.chart_end.value;
+                if let Some(unbound) = self.chart_end.update(message) {
+                    let end = f32::max(self.chart_end.value, unbound);
+                    self.chart_end.update(SliderMessage::Value(end));
 
-                self.chart_end.update(message);
-                self.chart_end.value = f32::max(self.chart_end.value, self.chart_start.value);
-                self.chart_end.value_str = self.chart_end.value.to_string();
-
-                if prev_value != self.chart_end.value {
-                    for sample in self.samples.iter_mut() {
-                        sample.set_data_range(self.chart_end.value..self.chart_end.value);
-                    }
+                    let range = self.chart_start.value..end;
+                    self.update_parameter(&Chromatography::set_data_range, range);
                 }
 
                 Task::none()
             }
             Message::HeightRequirement(message) => {
-                let prev_value = self.height_requirement.value;
-
-                self.height_requirement.update(message);
-
-                if prev_value != self.height_requirement.value {
-                    for sample in self.samples.iter_mut() {
-                        sample.set_height_requirement(self.height_requirement.value);
-                    }
-                }
-
-                Task::none()
-            }
-            Message::DerivativeCone(message) => {
-                let prev_value = self.derivative_cone.value;
-
-                self.derivative_cone.update(message);
-
-                if prev_value != self.derivative_cone.value {
-                    for sample in self.samples.iter_mut() {
-                        sample.set_derivative_cone(self.derivative_cone.value);
-                    }
+                if let Some(value) = self.height_requirement.update(message) {
+                    self.update_parameter(&Chromatography::set_height_requirement, value);
                 }
 
                 Task::none()
             }
             Message::InflectionRequirement(message) => {
-                let prev_value = self.inflection_requirement.value;
-
-                self.inflection_requirement.update(message);
-
-                if prev_value != self.inflection_requirement.value {
-                    for sample in self.samples.iter_mut() {
-                        sample.set_inflection_requirement(self.inflection_requirement.value);
-                    }
+                if let Some(value) = self.inflection_requirement.update(message) {
+                    self.update_parameter(&Chromatography::set_inflection_requirement, value);
                 }
 
                 Task::none()
             }
-            Message::HorizontalDeviation(message) => {
-                let prev_value = self.horizontal_deviation.value;
+            Message::RetentionTimeTolerance(message) => {
+                if let Some(value) = self.retention_time_tolerance.update(message) {
+                    self.update_parameter(&Chromatography::set_retention_time_tolerance, value);
+                }
 
-                self.horizontal_deviation.update(message);
-
-                if prev_value != self.horizontal_deviation.value {
-                    for sample in self.samples.iter_mut() {
-                        sample.set_horizontal_deviation(self.horizontal_deviation.value);
-                    }
+                Task::none()
+            }
+            Message::GlucoseUnitTolerance(message) => {
+                if let Some(value) = self.glucose_unit_tolerance.update(message) {
+                    self.update_parameter(&Chromatography::set_glucose_unit_tolerance, value);
                 }
 
                 Task::none()
@@ -699,6 +675,12 @@ impl App {
                             }
 
                             self.dex_handle = Some(handle);
+                            self.glucose_transformer =
+                                Some(self.samples[handle].get_glucose_transformer());
+                            self.update_parameter(
+                                &Chromatography::set_glucose_transformer,
+                                self.glucose_transformer,
+                            );
                         }
                         SampleType::Standard => {
                             if let Some(standard_handle) = self.standard_handle {
@@ -721,17 +703,45 @@ impl App {
         }
     }
 
-    fn as_retention_table(&self) -> String {
-        let mut content = String::from("Retention Times\n");
-        content.push_str("Lipid,Expected Time (m)");
-        for sample in &self.samples {
-            content.push_str(&format!(",{}", sample.title.as_ref().unwrap()));
+    fn update_parameter<
+        TParam: Clone,
+        TFun: Fn(&mut Chromatography, TParam) -> &mut Chromatography,
+    >(
+        &mut self,
+        func: &TFun,
+        value: TParam,
+    ) {
+        for sample in self.samples.iter_mut() {
+            func(sample, value.clone());
         }
 
-        for (i, lipid) in self.lipid_reference.iter().enumerate() {
+        if let Some(handle) = self.dex_handle {
+            let sample = &mut self.samples[handle];
+
+            let new_transformer = Some(sample.get_glucose_transformer());
+            if self.glucose_transformer != new_transformer {
+                self.glucose_transformer = new_transformer;
+                for sample in self.samples.iter_mut() {
+                    sample.set_glucose_transformer(new_transformer);
+                }
+            }
+        }
+    }
+
+    fn as_retention_table(&self) -> String {
+        let mut titles = String::new();
+        for sample in &self.samples {
+            titles.push_str(&format!(",{}", sample.title.as_ref().unwrap()));
+        }
+
+        let mut content = String::from("Retention Times\n");
+        content.push_str("Lipid,Expected Time (m)");
+        content.push_str(&titles);
+
+        for (i, reference) in self.lipid_reference.iter().enumerate() {
             content.push_str("\n");
-            content.push_str(&lipid.1);
-            content.push_str(&format!(",{}", lipid.0));
+            content.push_str(&reference.name);
+            content.push_str(&format!(",{}", reference.retention_time));
             for sample in &self.samples {
                 let retention_time = sample
                     .lipids
@@ -741,20 +751,39 @@ impl App {
             }
         }
 
-        content.push_str("\n\nAreas");
-        content.push_str("\nLipid");
-        for sample in &self.samples {
-            content.push_str(&format!(",{}", sample.title.as_ref().unwrap()));
+        if let Some(function) = self.glucose_transformer {
+            content.push_str("\n\n");
+            content.push_str("Glucose Units\n");
+            content.push_str("Lipid,Expected GU (m)");
+            content.push_str(&titles);
+
+            for (i, reference) in self.lipid_reference.iter().enumerate() {
+                content.push_str("\n");
+                content.push_str(&reference.name);
+                content.push_str(&format!(",{}", reference.glucose_units));
+                for sample in &self.samples {
+                    let retention_time = sample
+                        .lipids
+                        .get(i)
+                        .map_or(0.0, |peak| function.evaluate(peak.retention_point.x()));
+                    content.push_str(&format!(",{}", retention_time));
+                }
+            }
         }
+
+        content.push_str("\n\n");
+        content.push_str("Areas\n");
+        content.push_str("Lipid");
+        content.push_str(&titles);
 
         content.push_str("\nTotal Area");
         for sample in &self.samples {
             content.push_str(&format!(",{}", sample.total_area));
         }
 
-        for (i, lipid) in self.lipid_reference.iter().enumerate() {
+        for (i, reference) in self.lipid_reference.iter().enumerate() {
             content.push('\n');
-            content.push_str(&lipid.1);
+            content.push_str(&reference.name);
             for sample in &self.samples {
                 let area = sample.lipids.get(i).map_or(0.0, |peak| peak.area);
                 content.push_str(&format!(",{}", area));
@@ -767,9 +796,9 @@ impl App {
             content.push_str(&format!(",{}", sample.title.as_ref().unwrap()));
         }
 
-        for (i, lipid) in self.lipid_reference.iter().enumerate() {
+        for (i, reference) in self.lipid_reference.iter().enumerate() {
             content.push('\n');
-            content.push_str(&lipid.1);
+            content.push_str(&reference.name);
             for sample in &self.samples {
                 let concentration = sample.peaks.get(i).map_or(0.0, |peak| peak.concentration);
                 content.push_str(&format!(",{}", concentration));
@@ -779,7 +808,7 @@ impl App {
         content.push_str("\n\nUnknown Peaks");
         content.push_str("\nSample,Retention Time (m),Area\n");
         for (index, sample) in self.samples.iter().enumerate() {
-            for peak in sample.peaks.iter().filter(|peak| peak.lipid.is_none()) {
+            for peak in sample.peaks.iter().filter(|peak| peak.reference.is_none()) {
                 let entry = format!("{},{},{}\n", index, peak.retention_point.x(), peak.area);
                 content.push_str(&entry);
             }

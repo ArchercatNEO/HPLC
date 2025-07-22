@@ -6,7 +6,9 @@ use iced::widget::{container, row, scrollable, text};
 use iced::{Element, Point, widget::column};
 use plotters::style::BLACK;
 
+use crate::cubic::Cubic;
 use crate::peak::{Peak, PeakType};
+use crate::reference::Reference;
 use crate::vector::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -20,7 +22,7 @@ pub enum SampleType {
 
 #[derive(Clone, Debug, Default)]
 pub struct Chromatography {
-    lipid_master_table: Vec<(f32, String)>,
+    lipid_master_table: Vec<Reference>,
     data: Vec<Point2D>,
     pub first_derivative: Vec<Point2D>,
     pub second_derivative: Vec<Point2D>,
@@ -31,14 +33,15 @@ pub struct Chromatography {
     data_range: Option<Range<f32>>,
     include_unknowns: bool,
     height_requirement: f32,
-    derivative_cone: f32,
     inflection_requirement: f32,
-    horizontal_deviation: f32,
-    sample_type: SampleType,
+    retention_time_tolerance: f32,
+    glucose_unit_tolerance: f32,
+    pub sample_type: SampleType,
 
     subtract_blank: bool,
     blank_data: Option<Vec<Point2D>>,
     standard_peak: Option<Peak>,
+    glucose_transformer: Option<Cubic>,
 
     pub total_area: f32,
 
@@ -123,7 +126,7 @@ impl Chromatography {
         highest
     }
 
-    pub fn set_lipid_master_table(&mut self, value: Vec<(f32, String)>) -> &mut Self {
+    pub fn set_lipid_master_table(&mut self, value: Vec<Reference>) -> &mut Self {
         self.lipid_master_table = value;
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
@@ -147,14 +150,6 @@ impl Chromatography {
         self
     }
 
-    pub fn set_derivative_cone(&mut self, value: f32) -> &mut Self {
-        self.derivative_cone = value;
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
-
-        self
-    }
-
     pub fn set_inflection_requirement(&mut self, value: f32) -> &mut Self {
         self.inflection_requirement = value;
         self.peaks = self.calculate_peaks();
@@ -163,8 +158,130 @@ impl Chromatography {
         self
     }
 
-    pub fn set_horizontal_deviation(&mut self, value: f32) -> &mut Self {
-        self.horizontal_deviation = value;
+    pub fn set_retention_time_tolerance(&mut self, value: f32) -> &mut Self {
+        self.retention_time_tolerance = value;
+        self.lipids = self.label_peaks();
+
+        self
+    }
+
+    pub fn set_glucose_unit_tolerance(&mut self, value: f32) -> &mut Self {
+        self.glucose_unit_tolerance = value;
+        self.lipids = self.label_peaks();
+
+        self
+    }
+
+    pub fn get_glucose_transformer(&self) -> Cubic {
+        let mut intersections: Vec<Point2D> = vec![];
+
+        for peak in &self.peaks {
+            let retention = peak.retention_point.clone();
+            intersections = intersections
+                .into_iter()
+                .filter(|prev| prev.y() > retention.y())
+                .collect();
+            intersections.push(retention);
+        }
+
+        // Method of least squares (cubic interpolation)
+        // f(x) = ax^3 + bx^2 + cx + d
+        let x0 = intersections.len() as f32;
+        let x1: f32 = intersections.iter().map(|point| point.x()).sum();
+        let x2: f32 = intersections.iter().map(|point| point.x().powi(2)).sum();
+        let x3: f32 = intersections.iter().map(|point| point.x().powi(3)).sum();
+        let x4: f32 = intersections.iter().map(|point| point.x().powi(4)).sum();
+        let x5: f32 = intersections.iter().map(|point| point.x().powi(5)).sum();
+        let x6: f32 = intersections.iter().map(|point| point.x().powi(6)).sum();
+
+        let y1: f32 = intersections
+            .iter()
+            .enumerate()
+            .map(|(index, _)| (index + 2) as f32)
+            .sum();
+        let y1x1: f32 = intersections
+            .iter()
+            .enumerate()
+            .map(|(index, point)| ((index + 2) as f32) * point.x())
+            .sum();
+        let y1x2: f32 = intersections
+            .iter()
+            .enumerate()
+            .map(|(index, point)| ((index + 2) as f32) * point.x().powi(2))
+            .sum();
+        let y1x3: f32 = intersections
+            .iter()
+            .enumerate()
+            .map(|(index, point)| ((index + 2) as f32) * point.x().powi(3))
+            .sum();
+
+        let mut matrix = [
+            vec![x6, x5, x4, x3],
+            vec![x5, x4, x3, x2],
+            vec![x4, x3, x2, x1],
+            vec![x3, x2, x1, x0],
+        ];
+
+        let mut values = [y1x3, y1x2, y1x1, y1];
+
+        let solution = Self::solve_matrix(&mut matrix, &mut values).unwrap();
+
+        let a = solution[0];
+        let b = solution[1];
+        let c = solution[2];
+        let d = solution[3];
+
+        let function = Cubic::new(a, b, c, d);
+
+        function
+    }
+
+    fn solve_matrix(matrix: &mut [Vec<f32>], values: &mut [f32]) -> Option<Vec<f32>> {
+        let order = matrix.len();
+
+        for i in 0..order {
+            // Partial pivoting
+            let mut max_row = i;
+            for k in (i + 1)..order {
+                if matrix[k][i].abs() > matrix[max_row][i].abs() {
+                    max_row = k;
+                }
+            }
+
+            // Swap rows in matrix and vector
+            matrix.swap(i, max_row);
+            values.swap(i, max_row);
+
+            // Check for singular matrix
+            if matrix[i][i].abs() < 1e-12 {
+                return None; // Singular or nearly singular matrix
+            }
+
+            // Eliminate entries below pivot
+            for k in (i + 1)..order {
+                let factor = matrix[k][i] / matrix[i][i];
+                for j in i..order {
+                    matrix[k][j] -= factor * matrix[i][j];
+                }
+                values[k] -= factor * values[i];
+            }
+        }
+
+        // Back substitution
+        let mut x = vec![0.0; order];
+        for i in (0..order).rev() {
+            let mut sum = values[i];
+            for j in (i + 1)..order {
+                sum -= matrix[i][j] * x[j];
+            }
+            x[i] = sum / matrix[i][i];
+        }
+
+        Some(x)
+    }
+
+    pub fn set_glucose_transformer(&mut self, transformer: Option<Cubic>) -> &mut Self {
+        self.glucose_transformer = transformer;
         self.lipids = self.label_peaks();
 
         self
@@ -176,6 +293,11 @@ impl Chromatography {
 
     pub fn set_sample_type(&mut self, value: SampleType) -> &mut Self {
         self.sample_type = value;
+
+        if value == SampleType::Dex {
+            let transformer = self.get_glucose_transformer();
+            self.title = Some(format!("{:?}", transformer));
+        }
 
         self
     }
@@ -206,20 +328,19 @@ impl Chromatography {
         self
     }
 
-    fn mean_filter(data: Vec<Point2D>, smoothing: isize) -> Vec<Point2D> {
+    fn mean_filter(data: Vec<Point2D>, smoothing: usize) -> Vec<Point2D> {
         let mut smoothed = Vec::with_capacity(data.len());
 
-        let isize_len = data.len() as isize;
-        for i in 0..isize_len {
+        for i in 0..data.len() {
             let mut total = 0.0;
-            let start = isize::max(0, i - smoothing);
-            let end = isize::min(isize_len, i + smoothing);
+            let start = i.saturating_sub(smoothing);
+            let end = (i + smoothing).min(data.len() - 1);
 
             for offset in start..end {
-                total += data[offset as usize].y();
+                total += data[offset].y();
             }
 
-            let point = Point2D::new(data[i as usize].x(), total / (end - start) as f32);
+            let point = Point2D::new(data[i].x(), total / (end - start) as f32);
             smoothed.push(point);
         }
 
@@ -376,9 +497,9 @@ impl Chromatography {
                 if let Some(standard) = &self.standard_peak {
                     peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
                 }
-                
+
                 result.push(peak);
-                
+
                 peak = Peak::default();
                 peak.start = next.clone();
             }
@@ -390,9 +511,9 @@ impl Chromatography {
                 if let Some(standard) = &self.standard_peak {
                     peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
                 }
-                
+
                 result.push(peak);
-                
+
                 peak = Peak::default();
                 peak.start = next.clone();
                 peak.retention_point = next.clone();
@@ -407,45 +528,53 @@ impl Chromatography {
         let mut known: Vec<Peak> = vec![];
 
         for peak in self.peaks.iter_mut() {
-            peak.lipid = None;
+            peak.reference = None;
         }
 
-        for (retention_time, lipid) in self.lipid_master_table.iter() {
+        for reference in self.lipid_master_table.iter() {
             for i in 1..self.peaks.len() {
-                let prev = &self.peaks[i - 1];
-                let next = &self.peaks[i];
+                let (left, right) = self.peaks.split_at_mut(i);
+                let prev = left.last_mut().unwrap();
+                let next = &mut right[0];
 
-                // If we are at the first peak, hope it's a relevant peak
-                if i == 1
-                    && f32::abs(prev.retention_point.x() - *retention_time)
-                        < self.horizontal_deviation
-                {
-                    let mut peak = prev.clone();
-                    peak.lipid = Some(lipid.clone());
-                    self.peaks[i - 1].lipid = Some(lipid.clone());
-                    known.push(peak);
+                let transform = self.glucose_transformer.unwrap_or(Cubic::default());
+
+                let start = transform.evaluate(prev.retention_point.x());
+                let end = transform.evaluate(next.retention_point.x());
+
+                let expected = if self.glucose_transformer.is_none() {
+                    reference.retention_time
+                } else {
+                    reference.glucose_units
+                };
+
+                let tolerance = if self.glucose_transformer.is_none() {
+                    self.retention_time_tolerance
+                } else {
+                    self.glucose_unit_tolerance
+                };
+
+                // A lipid may be expected before the first peak (and is therefore not between 2 peaks)
+                if f32::abs(expected - start) < tolerance {
+                    prev.reference = Some(reference.clone());
+                    known.push(prev.clone());
                     break;
                 }
 
-                if prev.retention_point.x() <= *retention_time
-                    && *retention_time <= next.retention_point.x()
-                {
-                    let dist1 = retention_time - prev.retention_point.x();
-                    let dist2 = next.retention_point.x() - retention_time;
+                // If a lipid is expected between 2 peaks choose the closer one
+                if (start..end).contains(&expected) {
+                    let dist1 = expected - start;
+                    let dist2 = end - expected;
 
-                    if dist1 < dist2 && dist1 < self.horizontal_deviation {
-                        let mut peak = prev.clone();
-                        peak.lipid = Some(lipid.clone());
-                        self.peaks[i - 1].lipid = Some(lipid.clone());
-                        known.push(peak);
-                    } else if dist2 < self.horizontal_deviation {
-                        let mut peak = next.clone();
-                        peak.lipid = Some(lipid.clone());
-                        self.peaks[i].lipid = Some(lipid.clone());
-                        known.push(peak);
+                    if dist1 < dist2 && dist1 < tolerance {
+                        prev.reference = Some(reference.clone());
+                        known.push(prev.clone());
+                    } else if dist2 < tolerance {
+                        next.reference = Some(reference.clone());
+                        known.push(next.clone());
                     } else {
                         let mut fake = Peak::default();
-                        fake.lipid = Some(lipid.clone());
+                        fake.reference = Some(reference.clone());
                         known.push(fake);
                     }
 
@@ -457,31 +586,18 @@ impl Chromatography {
         known
     }
 
-    pub fn into_table_csv(&self) -> String {
-        self.peaks
-            .iter()
-            .filter(|peak| self.include_unknowns || peak.lipid != None)
-            .map(|peak| {
-                let entry = peak.lipid.clone().unwrap_or("Unknown".to_string());
-                format!("{},{},{}\n", entry, peak.retention_point.x(), peak.area)
-            })
-            .fold(
-                "Lipid,Retention Time (m),Area\n".to_string(),
-                |accum, entry| accum + &entry,
-            )
-    }
-
     pub fn into_table_element<'a>(&'a self) -> Element<'a, ()> {
         let mut table = column![];
         let title = text(format!("Total Area - {}", self.total_area))
-            .center()
-            .width(750);
+            .width(950)
+            .center();
 
         let mut gray = container::Style::default();
         gray = gray.background(color!(0xaaaaaa));
 
         let lipid_label = text("Lipid").center().width(200);
-        let retention_label = text("Retention Time (m)").center().width(200);
+        let retention_label = text("RT (m) (found/expected)").center().width(200);
+        let glucose_unit_label = text("GU (found/expected)").center().width(200);
         let area_label = text("Area").center().width(150);
         let concentration_label = text("Concentration (nmol/ml)").center().width(200);
 
@@ -491,6 +607,8 @@ impl Chromatography {
             text("|"),
             container(retention_label).style(move |_| gray),
             text("|"),
+            container(glucose_unit_label).style(move |_| gray),
+            text("|"),
             container(area_label).style(move |_| gray),
             text("|"),
             container(concentration_label).style(move |_| gray),
@@ -498,7 +616,7 @@ impl Chromatography {
         ]
         .spacing(20);
 
-        let spacer_string = "-".repeat(175);
+        let spacer_string = "-".repeat(215);
 
         table = table.push(title);
         table = table.push(text(spacer_string.clone()));
@@ -511,19 +629,42 @@ impl Chromatography {
         };
 
         for peak in iter {
-            let name = peak.lipid.as_ref().map_or("Unknown", |s| &s);
-            let retention_time = crate::round_to_precision(peak.retention_point.x(), 2);
-            let area = crate::round_to_precision(peak.area, 2);
-            let concentration = crate::round_to_precision(peak.concentration, 2);
+            let mut retention_time = format!("{:.2}", peak.retention_point.x());
+            let area = format!("{:.2}", peak.area);
+
+            let mut glucose_units = {
+                if peak.retention_point.x() == 0.0 {
+                    "0.00".to_string()
+                } else {
+                    let value = self
+                        .glucose_transformer
+                        .map_or(0.0, |function| function.evaluate(peak.retention_point.x()));
+                    format!("{:.2}", value)
+                }
+            };
+
+            let concentration = format!("{:.2}", peak.concentration);
+
+            let name = if let Some(reference) = &peak.reference {
+                retention_time.push_str(&format!("/{:.2}", reference.retention_time));
+                glucose_units.push_str(&format!("/{:.2}", reference.glucose_units));
+
+                reference.name.clone()
+            } else {
+                "Unknown".to_string()
+            };
+
             let content = row![
                 text("|"),
                 text(name).center().width(200),
                 text("|"),
                 text(retention_time).center().width(200),
                 text("|"),
+                text(glucose_units).center().width(200),
+                text("|"),
                 text(area).center().width(150),
                 text("|"),
-                text(format!("{}", concentration)).center().width(200),
+                text(concentration).center().width(200),
                 text("|"),
             ]
             .spacing(20);
@@ -533,6 +674,6 @@ impl Chromatography {
         }
 
         table = table.push(text(spacer_string.clone()));
-        scrollable(table).into()
+        scrollable(table).height(200).into()
     }
 }
