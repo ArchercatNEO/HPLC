@@ -7,6 +7,8 @@ use iced::{Element, Point, widget::column};
 use plotters::style::BLACK;
 
 use crate::peak::{Peak, PeakType};
+use crate::quadratic::Quadratic;
+use crate::reference::Reference;
 use crate::vector::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -20,7 +22,7 @@ pub enum SampleType {
 
 #[derive(Clone, Debug, Default)]
 pub struct Chromatography {
-    lipid_master_table: Vec<(f32, String)>,
+    lipid_master_table: Vec<Reference>,
     data: Vec<Point2D>,
     pub first_derivative: Vec<Point2D>,
     pub second_derivative: Vec<Point2D>,
@@ -31,14 +33,15 @@ pub struct Chromatography {
     data_range: Option<Range<f32>>,
     include_unknowns: bool,
     height_requirement: f32,
-    derivative_cone: f32,
     inflection_requirement: f32,
-    horizontal_deviation: f32,
-    sample_type: SampleType,
+    retention_time_tolerance: f32,
+    glucose_unit_tolerance: f32,
+    pub sample_type: SampleType,
 
     subtract_blank: bool,
     blank_data: Option<Vec<Point2D>>,
     standard_peak: Option<Peak>,
+    glucose_function: Option<Quadratic>,
 
     pub total_area: f32,
 
@@ -123,7 +126,7 @@ impl Chromatography {
         highest
     }
 
-    pub fn set_lipid_master_table(&mut self, value: Vec<(f32, String)>) -> &mut Self {
+    pub fn set_lipid_master_table(&mut self, value: Vec<Reference>) -> &mut Self {
         self.lipid_master_table = value;
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
@@ -147,14 +150,6 @@ impl Chromatography {
         self
     }
 
-    pub fn set_derivative_cone(&mut self, value: f32) -> &mut Self {
-        self.derivative_cone = value;
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
-
-        self
-    }
-
     pub fn set_inflection_requirement(&mut self, value: f32) -> &mut Self {
         self.inflection_requirement = value;
         self.peaks = self.calculate_peaks();
@@ -163,8 +158,34 @@ impl Chromatography {
         self
     }
 
-    pub fn set_horizontal_deviation(&mut self, value: f32) -> &mut Self {
-        self.horizontal_deviation = value;
+    pub fn set_retention_time_tolerance(&mut self, value: f32) -> &mut Self {
+        self.retention_time_tolerance = value;
+        self.lipids = self.label_peaks();
+
+        self
+    }
+
+    pub fn set_glucose_unit_tolerance(&mut self, value: f32) -> &mut Self {
+        self.glucose_unit_tolerance = value;
+        self.lipids = self.label_peaks();
+
+        self
+    }
+    
+    pub fn get_glucose_quadratic(&self) -> Quadratic {
+        let mut intersections: Vec<Peak> = vec![];
+        
+        for peak in &self.peaks {
+            intersections = intersections.into_iter().filter(|prev| prev.retention_point.y() > peak.retention_point.y()).collect();
+            intersections.push(peak.clone());
+        }
+        
+        //TODO perform interpolation
+        Quadratic::default()
+    }
+    
+    pub fn set_glucose_quadratic(&mut self, quadratic: Option<Quadratic>) -> &mut Self{
+        self.glucose_function = quadratic;
         self.lipids = self.label_peaks();
 
         self
@@ -376,9 +397,9 @@ impl Chromatography {
                 if let Some(standard) = &self.standard_peak {
                     peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
                 }
-                
+
                 result.push(peak);
-                
+
                 peak = Peak::default();
                 peak.start = next.clone();
             }
@@ -390,9 +411,9 @@ impl Chromatography {
                 if let Some(standard) = &self.standard_peak {
                     peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
                 }
-                
+
                 result.push(peak);
-                
+
                 peak = Peak::default();
                 peak.start = next.clone();
                 peak.retention_point = next.clone();
@@ -410,42 +431,52 @@ impl Chromatography {
             peak.lipid = None;
         }
 
-        for (retention_time, lipid) in self.lipid_master_table.iter() {
+        for reference in self.lipid_master_table.iter() {
             for i in 1..self.peaks.len() {
-                let prev = &self.peaks[i - 1];
-                let next = &self.peaks[i];
+                let (left, right) = self.peaks.split_at_mut(i);
+                let prev = left.last_mut().unwrap();
+                let next = &mut right[0];
 
-                // If we are at the first peak, hope it's a relevant peak
-                if i == 1
-                    && f32::abs(prev.retention_point.x() - *retention_time)
-                        < self.horizontal_deviation
-                {
-                    let mut peak = prev.clone();
-                    peak.lipid = Some(lipid.clone());
-                    self.peaks[i - 1].lipid = Some(lipid.clone());
-                    known.push(peak);
+                let transform = self
+                    .glucose_function
+                    .unwrap_or(Quadratic::new(0.0, 1.0, 0.0));
+
+                let start = transform.evaluate(prev.retention_point.x());
+                let end = transform.evaluate(next.retention_point.x());
+
+                let expected = if self.glucose_function.is_none() {
+                    reference.retention_time
+                } else {
+                    reference.glucose_units
+                };
+
+                let tolerance = if self.glucose_function.is_none() {
+                    self.retention_time_tolerance
+                } else {
+                    self.glucose_unit_tolerance
+                };
+
+                // A lipid may be expected before the first peak (and is therefore not between 2 peaks)
+                if i == 1 && f32::abs(expected - start) < tolerance {
+                    prev.lipid = Some(reference.name.clone());
+                    known.push(prev.clone());
                     break;
                 }
 
-                if prev.retention_point.x() <= *retention_time
-                    && *retention_time <= next.retention_point.x()
-                {
-                    let dist1 = retention_time - prev.retention_point.x();
-                    let dist2 = next.retention_point.x() - retention_time;
+                // If a lipid is expected between 2 peaks choose the closer one
+                if (start..end).contains(&expected) {
+                    let dist1 = expected - start;
+                    let dist2 = end - expected;
 
-                    if dist1 < dist2 && dist1 < self.horizontal_deviation {
-                        let mut peak = prev.clone();
-                        peak.lipid = Some(lipid.clone());
-                        self.peaks[i - 1].lipid = Some(lipid.clone());
-                        known.push(peak);
-                    } else if dist2 < self.horizontal_deviation {
-                        let mut peak = next.clone();
-                        peak.lipid = Some(lipid.clone());
-                        self.peaks[i].lipid = Some(lipid.clone());
-                        known.push(peak);
+                    if dist1 < dist2 && dist1 < tolerance {
+                        prev.lipid = Some(reference.name.clone());
+                        known.push(prev.clone());
+                    } else if dist2 < tolerance {
+                        next.lipid = Some(reference.name.clone());
+                        known.push(next.clone());
                     } else {
                         let mut fake = Peak::default();
-                        fake.lipid = Some(lipid.clone());
+                        fake.lipid = Some(reference.name.clone());
                         known.push(fake);
                     }
 
