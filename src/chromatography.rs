@@ -1,5 +1,7 @@
+use std::fs;
 use std::iter::Iterator;
 use std::ops::Range;
+use std::path::PathBuf;
 
 use iced::color;
 use iced::widget::{container, row, scrollable, text};
@@ -22,68 +24,96 @@ pub enum SampleType {
 
 #[derive(Clone, Debug, Default)]
 pub struct Chromatography {
-    lipid_master_table: Vec<Reference>,
-    data: Vec<Point2D>,
-    pub first_derivative: Vec<Point2D>,
-    pub second_derivative: Vec<Point2D>,
+    // Transformations of the data
+    raw_data: Vec<Point2D>,
+    cleaned_data: Vec<Point2D>,
+    first_derivative: Vec<Point2D>,
+    second_derivative: Vec<Point2D>,
     pub baseline: Vec<Point2D>,
     pub peaks: Vec<Peak>,
     pub lipids: Vec<Peak>,
+    pub total_area: f32,
 
+    // Chromatography configuration
+    sample_type: SampleType,
     data_range: Option<Range<f32>>,
     include_unknowns: bool,
     height_requirement: f32,
     inflection_requirement: f32,
     retention_time_tolerance: f32,
     glucose_unit_tolerance: f32,
-    pub sample_type: SampleType,
 
-    subtract_blank: bool,
-    blank_data: Option<Vec<Point2D>>,
+    // External references
+    lipid_references: Vec<Reference>,
     standard_peak: Option<Peak>,
     glucose_transformer: Option<Cubic>,
 
-    pub total_area: f32,
-
-    //whyyyyyyyyyyyyyyyyyy
+    // Display configuration + state
     //TODO: how can we not put data that is only for rendering here?
     pub title: Option<String>,
     pub global_zoom: Point,
-    pub show_derivative: bool,
 }
 
 impl Chromatography {
-    pub fn get_data(&self) -> Vec<Point2D> {
-        if let Some(range) = &self.data_range {
-            let cloned = self.data.to_vec().into_iter();
-            let filtered = cloned.filter(|point| range.start < point.x() && point.x() < range.end);
-
-            if self.subtract_blank {
-                if let Some(blank) = &self.blank_data {
-                    let data = filtered
-                        .zip(blank)
-                        .map(|(data, noise)| Point2D::new(data.x(), data.y() - noise.y()))
-                        .collect();
-                    return data;
-                }
+    pub fn from_file(path: &PathBuf) -> Option<Self> {
+        let file = {
+            match fs::read_to_string(path) {
+                Ok(content) => content,
+                Err(_) => return None,
             }
+        };
 
-            let vec = filtered.collect();
-            Self::mean_filter(vec, 5)
-        } else {
-            self.data.to_vec()
-        }
+        let mut empty = Chromatography::default();
+
+        empty.title = {
+            let header = file.lines().next().unwrap_or("");
+            let mut data = header.split("\t");
+            data.next();
+            data.next().map(|slice| slice.to_string())
+        };
+
+        empty.raw_data = file
+            .lines()
+            .filter_map(|line| {
+                let mut data = if line.contains("\t") {
+                    line.split("\t")
+                } else {
+                    line.split(",")
+                };
+
+                let x: f32 = match data.next() {
+                    Some(string) => match string.parse::<f32>() {
+                        Ok(value) => value,
+                        Err(_) => return None,
+                    },
+                    None => return None,
+                };
+
+                let y: f32 = match data.next() {
+                    Some(string) => match string.parse::<f32>() {
+                        Ok(value) => value,
+                        Err(_) => return None,
+                    },
+                    None => return None,
+                };
+
+                Some(Point2D::new(x, y))
+            })
+            .collect();
+
+        // TODO: parametrice smoothing factor
+        empty.cleaned_data = Self::mean_filter(&empty.raw_data, 5);
+        empty.first_derivative = Self::calculate_derivative(&empty.cleaned_data);
+        empty.second_derivative = Self::calculate_derivative(&empty.first_derivative);
+        empty.baseline = empty.calculate_baseline();
+        empty.peaks = empty.calculate_peaks();
+        empty.lipids = empty.label_peaks();
+
+        Some(empty)
     }
 
-    pub fn set_data(&mut self, value: Vec<Point2D>) -> &mut Self {
-        self.data = value;
-        self.first_derivative = Self::calculate_derivative(&self.get_data());
-        self.second_derivative = Self::calculate_derivative(&self.first_derivative);
-        self.baseline = self.calculate_baseline();
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
-
-        self
+    pub fn get_data(&self) -> Vec<Point2D> {
+        self.cleaned_data.clone()
     }
 
     pub fn get_data_range(&self) -> Range<f32> {
@@ -91,17 +121,22 @@ impl Chromatography {
             range.clone()
         } else {
             let default = &Point2D::default();
-            let end = self.data.last().unwrap_or(default);
+            let end = self.raw_data.last().unwrap_or(default);
             0.0..end.x()
         }
     }
 
-    /// When performing HPLC there may be extreme noise
-    /// at the beginning and end of the sample.
-    /// Setting this will crop the raw data for the purposes of the baseline and peaks
     pub fn set_data_range(&mut self, value: Range<f32>) -> &mut Self {
+        let filter: Vec<Point2D> = self
+            .raw_data
+            .iter()
+            .cloned()
+            .filter(|point| value.contains(&point.x()))
+            .collect();
+
         self.data_range = Some(value);
-        self.first_derivative = Self::calculate_derivative(&self.get_data());
+        self.cleaned_data = Self::mean_filter(&filter, 5);
+        self.first_derivative = Self::calculate_derivative(&self.cleaned_data);
         self.second_derivative = Self::calculate_derivative(&self.first_derivative);
         self.baseline = self.calculate_baseline();
         self.peaks = self.calculate_peaks();
@@ -111,13 +146,8 @@ impl Chromatography {
     }
 
     pub fn get_highest_point(&self) -> f32 {
-        let data = self.get_data();
-        if data.len() == 0 {
-            return 0.0;
-        }
-
         let mut highest = 0.0;
-        for point in data {
+        for point in &self.cleaned_data {
             if point.y() > highest {
                 highest = point.y();
             }
@@ -126,8 +156,8 @@ impl Chromatography {
         highest
     }
 
-    pub fn set_lipid_master_table(&mut self, value: Vec<Reference>) -> &mut Self {
-        self.lipid_master_table = value;
+    pub fn set_lipid_references(&mut self, value: Vec<Reference>) -> &mut Self {
+        self.lipid_references = value;
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
@@ -302,24 +332,6 @@ impl Chromatography {
         self
     }
 
-    pub fn set_subtract_blank(&mut self, value: bool) -> &mut Self {
-        self.subtract_blank = value;
-        self.baseline = self.calculate_baseline();
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
-
-        self
-    }
-
-    pub fn set_blank_data(&mut self, value: Option<Vec<Point2D>>) -> &mut Self {
-        self.blank_data = value;
-        self.baseline = self.calculate_baseline();
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
-
-        self
-    }
-
     pub fn set_standard_peak(&mut self, value: Option<Peak>) -> &mut Self {
         self.standard_peak = value;
         self.peaks = self.calculate_peaks();
@@ -328,7 +340,7 @@ impl Chromatography {
         self
     }
 
-    fn mean_filter(data: Vec<Point2D>, smoothing: usize) -> Vec<Point2D> {
+    fn mean_filter(data: &[Point2D], smoothing: usize) -> Vec<Point2D> {
         let mut smoothed = Vec::with_capacity(data.len());
 
         for i in 0..data.len() {
@@ -366,10 +378,7 @@ impl Chromatography {
     }
 
     fn calculate_baseline(&self) -> Vec<Point2D> {
-        let data = self.get_data();
-        if data.len() < 2 {
-            return vec![];
-        }
+        let data = &self.cleaned_data;
 
         let mut origin = &data[0];
         let mut orgin_index = 0;
@@ -408,10 +417,7 @@ impl Chromatography {
     }
 
     fn calculate_peaks(&mut self) -> Vec<Peak> {
-        let data = self.get_data();
-        if data.len() == 0 {
-            return vec![];
-        }
+        let data = &self.cleaned_data;
 
         self.total_area = 0.0;
 
@@ -531,7 +537,7 @@ impl Chromatography {
             peak.reference = None;
         }
 
-        for reference in self.lipid_master_table.iter() {
+        for reference in self.lipid_references.iter() {
             for i in 1..self.peaks.len() {
                 let (left, right) = self.peaks.split_at_mut(i);
                 let prev = left.last_mut().unwrap();
@@ -575,6 +581,7 @@ impl Chromatography {
                     } else {
                         let mut fake = Peak::default();
                         fake.reference = Some(reference.clone());
+                        fake.peak_type = PeakType::Reference;
                         known.push(fake);
                     }
 

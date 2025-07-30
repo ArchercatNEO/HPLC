@@ -79,18 +79,7 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                 )?;
             }
             PeakType::Reference => {
-                let retention = pos.next().unwrap();
-                let text = self
-                    .reference
-                    .as_ref()
-                    .map_or("Unknown", |reference| &reference.name);
-
-                backend.draw_text(
-                    &text,
-                    &("sans-serif", 10).into_text_style(&parent_dim),
-                    retention,
-                )?;
-                backend.draw_circle(retention, 3, &RED, true)?;
+                // Reference peaks are not drawn
             }
         }
 

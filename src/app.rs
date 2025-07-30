@@ -207,8 +207,6 @@ pub struct App {
     glucose_unit_tolerance: SliderInfo,
     glucose_transformer: Option<Cubic>,
     include_unknowns: bool,
-    subtract_blank: bool,
-    show_derivative: bool,
     global_zoom: Point,
 }
 
@@ -235,8 +233,6 @@ impl Default for App {
             glucose_unit_tolerance: SliderInfo::new(0.02, 0.0, 1.0, 0.01, "Glucose Unit Tolerance"),
             glucose_transformer: None,
             include_unknowns: false,
-            subtract_blank: false,
-            show_derivative: false,
             global_zoom: Point::new(0.0, 0.0),
         }
     }
@@ -258,8 +254,6 @@ pub enum Message {
     RetentionTimeTolerance(SliderMessage),
     GlucoseUnitTolerance(SliderMessage),
     ShowUnknowns(bool),
-    SubtractBlank(bool),
-    ShowDerivate(bool),
     ZoomX(f32),
     ZoomY(f32),
     TabSwitch(usize),
@@ -348,20 +342,6 @@ impl App {
             row![toggle, label]
         };
 
-        let subtract_blank = {
-            let toggle = toggler(self.subtract_blank).on_toggle(Message::SubtractBlank);
-            let label = text("Subtract blank");
-
-            row![toggle, label]
-        };
-
-        let show_derivative = {
-            let toggle = toggler(self.show_derivative).on_toggle(Message::ShowDerivate);
-            let label = text("Show derivative");
-
-            row![toggle, label]
-        };
-
         let sample_type = {
             let selected = self
                 .sample_handle
@@ -395,8 +375,7 @@ impl App {
             column![header, data, blank, dex, standard]
         };
 
-        let options2 =
-            column![unknown_lipid, subtract_blank, show_derivative, sample_type].width(250);
+        let options2 = column![unknown_lipid, sample_type].width(250);
 
         let ui = if let Some(handle) = self.sample_handle {
             let header = text(format!("Sample {}", handle));
@@ -465,13 +444,13 @@ impl App {
             }
             Message::DataLoad(paths) => {
                 for path in paths {
-                    let content = crate::parse_file(&path, crate::parse_line_as_data);
-                    let mut sample = Chromatography::default();
-                    sample.title = crate::parse_header(&path);
-                    sample.show_derivative = self.show_derivative;
-                    sample.set_data(content);
+                    let mut sample = match Chromatography::from_file(&path) {
+                        Some(value) => value,
+                        None => continue,
+                    };
+
                     sample.set_data_range(self.chart_start.value..self.chart_end.value);
-                    sample.set_lipid_master_table(self.lipid_reference.clone());
+                    sample.set_lipid_references(self.lipid_reference.clone());
                     sample.set_include_unknowns(self.include_unknowns);
                     sample.set_height_requirement(self.height_requirement.value);
                     sample.set_retention_time_tolerance(self.retention_time_tolerance.value);
@@ -502,7 +481,7 @@ impl App {
             }
             Message::ReferenceLoad(data) => {
                 for sample in self.samples.iter_mut() {
-                    sample.set_lipid_master_table(data.clone());
+                    sample.set_lipid_references(data.clone());
                 }
 
                 self.lipid_reference = data;
@@ -591,28 +570,6 @@ impl App {
 
                 Task::none()
             }
-            Message::SubtractBlank(value) => {
-                self.subtract_blank = value;
-                for (i, sample) in self.samples.iter_mut().enumerate() {
-                    if let Some(handle) = self.blank_handle {
-                        if handle == i {
-                            continue;
-                        }
-                    }
-
-                    sample.set_subtract_blank(value);
-                }
-
-                Task::none()
-            }
-            Message::ShowDerivate(show) => {
-                self.show_derivative = show;
-                for sample in self.samples.iter_mut() {
-                    sample.show_derivative = show;
-                }
-
-                Task::none()
-            }
             Message::ZoomX(zoom) => {
                 self.global_zoom.x = zoom;
                 for sample in self.samples.iter_mut() {
@@ -657,17 +614,6 @@ impl App {
                             }
 
                             self.blank_handle = Some(handle);
-                            self.samples[handle].set_subtract_blank(false);
-
-                            let data = self.samples[handle].get_data();
-
-                            for (i, sample) in self.samples.iter_mut().enumerate() {
-                                if i == handle {
-                                    continue;
-                                }
-
-                                sample.set_blank_data(Some(data.clone()));
-                            }
                         }
                         SampleType::Dex => {
                             if let Some(dex_handle) = self.dex_handle {
@@ -689,9 +635,7 @@ impl App {
 
                             self.standard_handle = Some(handle);
                             let peak = self.samples[handle].peaks[1].clone();
-                            for sample in self.samples.iter_mut() {
-                                sample.set_standard_peak(Some(peak.clone()));
-                            }
+                            self.update_parameter(&Chromatography::set_standard_peak, Some(peak));
                         }
                     }
 

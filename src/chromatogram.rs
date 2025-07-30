@@ -77,35 +77,26 @@ impl Chart<()> for Chromatography {
             .draw()
             .expect("failed to configure chart");
 
-        if self.show_derivative {
-            let derivate_series = LineSeries::new(self.second_derivative.clone(), &BLUE);
-            chart
-                .draw_series(derivate_series)
-                .expect("failed to draw series")
-                .label("derivative")
-                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
-        } else {
-            let data_series = LineSeries::new(self.get_data(), &RED);
+        let data_series = LineSeries::new(self.get_data(), &RED);
 
-            chart
-                .draw_series(data_series)
-                .expect("failed to draw series")
-                .label("data")
-                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+        chart
+            .draw_series(data_series)
+            .expect("failed to draw series")
+            .label("data")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
 
-            let baseline_series = LineSeries::new(self.baseline.clone(), &GREEN);
-            chart
-                .draw_series(baseline_series)
-                .expect("failed to draw series")
-                .label("baseline")
-                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
+        let baseline_series = LineSeries::new(self.baseline.clone(), &GREEN);
+        chart
+            .draw_series(baseline_series)
+            .expect("failed to draw series")
+            .label("baseline")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
 
-            chart
-                .draw_series(self.peaks.clone())
-                .expect("failed to draw series")
-                .label("peaks")
-                .legend(|(x, y)| Circle::new((x, y), 5, &BLUE));
-        }
+        chart
+            .draw_series(self.peaks.clone())
+            .expect("failed to draw series")
+            .label("peaks")
+            .legend(|(x, y)| Circle::new((x, y), 5, &BLUE));
     }
 
     fn update(
