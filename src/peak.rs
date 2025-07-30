@@ -3,7 +3,7 @@ use plotters::{
     prelude::*,
 };
 
-use crate::vector::*;
+use crate::{reference::Reference, vector::*};
 
 #[derive(Clone, Debug, Default)]
 pub enum PeakType {
@@ -21,8 +21,8 @@ pub struct Peak {
     pub height: f32,
     pub area: f32,
     pub concentration: f32,
-    pub lipid: Option<String>,
     pub peak_type: PeakType,
+    pub reference: Option<Reference>,
 }
 
 impl<'a> PointCollection<'a, Point2D> for &'a Peak {
@@ -49,7 +49,10 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                 backend.draw_circle(pos.next().unwrap(), 3, &BLUE, true)?;
 
                 let retention = pos.next().unwrap();
-                let text = self.lipid.as_ref().map_or("Unknown", |label| &label);
+                let text = self
+                    .reference
+                    .as_ref()
+                    .map_or("Unknown", |reference| &reference.name);
 
                 backend.draw_text(
                     &text,
@@ -65,7 +68,10 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                 backend.draw_circle(start, 3, &color, true)?;
                 backend.draw_circle(retention, 3, &color, true)?;
 
-                let text = self.lipid.as_ref().map_or("Unknown", |label| &label);
+                let text = self
+                    .reference
+                    .as_ref()
+                    .map_or("Unknown", |reference| &reference.name);
                 backend.draw_text(
                     &text,
                     &("sans-serif", 10).into_text_style(&parent_dim),
@@ -74,7 +80,10 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
             }
             PeakType::Reference => {
                 let retention = pos.next().unwrap();
-                let text = self.lipid.as_ref().map_or("Unknown", |label| &label);
+                let text = self
+                    .reference
+                    .as_ref()
+                    .map_or("Unknown", |reference| &reference.name);
 
                 backend.draw_text(
                     &text,
