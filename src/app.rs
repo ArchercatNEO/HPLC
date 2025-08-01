@@ -3,193 +3,18 @@ use std::path::PathBuf;
 
 use iced::{
     Element, Length, Point, Task,
-    alignment::{Horizontal, Vertical},
-    widget::{button, column, radio, row, scrollable, slider, text, text_input, toggler},
+    alignment::Horizontal,
+    widget::{button, column, radio, row, scrollable, text, toggler},
 };
 use plotters_iced::ChartWidget;
 
 use crate::{
     chromatography::{Chromatography, SampleType},
     cubic::Cubic,
+    expandable_slider::{ExpandableSlider, Message as SliderMessage},
     reference::Reference,
     vector::*,
 };
-
-#[derive(Clone, Debug)]
-pub enum SliderMessage {
-    Value(f32),
-    ValueStr(String),
-    Start(String),
-    End(String),
-    Step(String),
-    Compact(bool),
-}
-
-//TODO: support exponential sliders
-#[derive(Clone, Debug)]
-struct SliderInfo {
-    pub value: f32,
-    start: f32,
-    end: f32,
-    step: f32,
-    label: &'static str,
-    pub value_str: String,
-    start_str: String,
-    end_str: String,
-    step_str: String,
-    expanded: bool,
-}
-
-impl SliderInfo {
-    pub fn new(value: f32, start: f32, end: f32, step: f32, label: &'static str) -> Self {
-        Self {
-            value,
-            start,
-            end,
-            step,
-            label,
-            value_str: value.to_string(),
-            start_str: start.to_string(),
-            end_str: end.to_string(),
-            step_str: step.to_string(),
-            expanded: false,
-        }
-    }
-
-    pub fn view(&self) -> Element<Option<SliderMessage>> {
-        let number_width = Length::FillPortion(2);
-
-        let expanded = toggler(self.expanded).on_toggle(|bit| Some(SliderMessage::Compact(bit)));
-
-        let label = text(format!("{}: ", self.label))
-            .align_x(Horizontal::Right)
-            .width(Length::FillPortion(3));
-
-        let bar = slider(self.start..=self.end, self.value, |float| {
-            Some(SliderMessage::Value(float))
-        })
-        .step(self.step)
-        .width(Length::FillPortion(5));
-
-        if self.expanded {
-            let value = {
-                let input = text_input(&self.value_str, &self.value_str)
-                    .width(number_width)
-                    .on_input(Self::wrap_parse(SliderMessage::ValueStr));
-
-                row![label, input].align_y(Vertical::Center)
-            };
-
-            let range = {
-                let label = text(": ");
-
-                let start = text_input(&self.start_str, &self.start_str)
-                    .width(number_width)
-                    .on_input(Self::wrap_parse(SliderMessage::Start));
-
-                let inequality = text("<= x <= ");
-
-                let end = text_input(&self.end_str, &self.end_str)
-                    .width(number_width)
-                    .on_input(Self::wrap_parse(SliderMessage::End));
-
-                row![label, start, inequality, end]
-                    .spacing(5)
-                    .align_y(Vertical::Center)
-            };
-
-            let step = {
-                let label = text(": Step: ");
-                let input = text_input(&self.step_str, &self.step_str)
-                    .width(number_width)
-                    .on_input(Self::wrap_parse(SliderMessage::Step));
-
-                row![label, input].align_y(Vertical::Center)
-            };
-
-            let top = row![expanded, value, range, step].spacing(10);
-
-            let el = column![top, bar];
-            el.into()
-        } else {
-            let info = text(&self.value_str).width(number_width);
-
-            row![expanded, label, bar, info].spacing(10).into()
-        }
-    }
-
-    pub fn update(&mut self, message: SliderMessage) -> Option<f32> {
-        match message {
-            SliderMessage::Value(value) => {
-                if self.value != value {
-                    self.value = value;
-                    self.value_str = value.to_string();
-                    Some(value)
-                } else {
-                    None
-                }
-            }
-            SliderMessage::ValueStr(content) => {
-                self.value_str = content;
-
-                if let Ok(float) = self.value_str.parse::<f32>() {
-                    self.value = float;
-                    Some(float)
-                } else {
-                    None
-                }
-            }
-            SliderMessage::Start(content) => {
-                if let Ok(float) = content.parse::<f32>() {
-                    self.start = float;
-                }
-
-                self.start_str = content;
-                None
-            }
-            SliderMessage::End(content) => {
-                if let Ok(float) = content.parse::<f32>() {
-                    self.end = float;
-                }
-
-                self.end_str = content;
-                None
-            }
-            SliderMessage::Step(content) => {
-                if let Ok(float) = content.parse::<f32>() {
-                    self.step = float;
-                }
-
-                self.step_str = content;
-                None
-            }
-            SliderMessage::Compact(expanded) => {
-                self.expanded = expanded;
-                None
-            }
-        }
-    }
-
-    fn wrap_parse<F: Fn(String) -> SliderMessage>(
-        enum_fn: F,
-    ) -> impl Fn(String) -> Option<SliderMessage> {
-        move |content: String| {
-            let mut numeric = true;
-            for character in content.chars() {
-                if !character.is_ascii_digit() && character != '.' {
-                    numeric = false;
-                    break;
-                }
-            }
-
-            if numeric {
-                Some(enum_fn(content))
-            } else {
-                None
-            }
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct App {
@@ -198,42 +23,62 @@ pub struct App {
     sample_handle: Option<usize>,
     blank_handle: Option<usize>,
     dex_handle: Option<usize>,
-    standard_handle: Option<usize>,
-    chart_start: SliderInfo,
-    chart_end: SliderInfo,
-    height_requirement: SliderInfo,
-    inflection_requirement: SliderInfo,
-    retention_time_tolerance: SliderInfo,
-    glucose_unit_tolerance: SliderInfo,
     glucose_transformer: Option<Cubic>,
+    standard_handle: Option<usize>,
+    chart_start: ExpandableSlider,
+    chart_end: ExpandableSlider,
+    height_requirement: ExpandableSlider,
+    inflection_requirement: ExpandableSlider,
+    retention_time_tolerance: ExpandableSlider,
+    glucose_unit_tolerance: ExpandableSlider,
+    zoom_x: ExpandableSlider,
+    zoom_y: ExpandableSlider,
     include_unknowns: bool,
-    global_zoom: Point,
 }
 
 impl Default for App {
     fn default() -> Self {
+        let mut zoom_x = ExpandableSlider::new(0.0, 0.0, 100.0, 1.1, "Horizontal Zoom");
+        let mut zoom_y = ExpandableSlider::new(0.0, 0.0, 100.0, 1.1, "Vertical Zoom");
+
+        zoom_x.set_exponential(true);
+        zoom_y.set_exponential(true);
+
         Self {
             lipid_reference: vec![],
             samples: vec![],
             sample_handle: None,
             blank_handle: None,
             dex_handle: None,
+            glucose_transformer: None,
             standard_handle: None,
-            chart_start: SliderInfo::new(8.5, 0.0, 60.0, 0.5, "Chart Start"),
-            chart_end: SliderInfo::new(36.5, 0.0, 60.0, 0.5, "Chart End"),
-            height_requirement: SliderInfo::new(0.3, 0.0, 1.0, 0.01, "Height Requirement"),
-            inflection_requirement: SliderInfo::new(0.0, 0.0, 10.0, 1.0, "Inflection Requirement"),
-            retention_time_tolerance: SliderInfo::new(
+            chart_start: ExpandableSlider::new(8.5, 0.0, 60.0, 0.5, "Chart Start"),
+            chart_end: ExpandableSlider::new(36.5, 0.0, 60.0, 0.5, "Chart End"),
+            height_requirement: ExpandableSlider::new(0.3, 0.0, 1.0, 0.01, "Height Requirement"),
+            inflection_requirement: ExpandableSlider::new(
+                0.0,
+                0.0,
+                10.0,
+                1.0,
+                "Inflection Requirement",
+            ),
+            retention_time_tolerance: ExpandableSlider::new(
                 0.2,
                 0.0,
                 1.0,
                 0.01,
                 "Retention Time Tolerance",
             ),
-            glucose_unit_tolerance: SliderInfo::new(0.02, 0.0, 1.0, 0.01, "Glucose Unit Tolerance"),
-            glucose_transformer: None,
+            glucose_unit_tolerance: ExpandableSlider::new(
+                0.02,
+                0.0,
+                1.0,
+                0.01,
+                "Glucose Unit Tolerance",
+            ),
+            zoom_x,
+            zoom_y,
             include_unknowns: false,
-            global_zoom: Point::new(0.0, 0.0),
         }
     }
 }
@@ -253,9 +98,9 @@ pub enum Message {
     InflectionRequirement(SliderMessage),
     RetentionTimeTolerance(SliderMessage),
     GlucoseUnitTolerance(SliderMessage),
+    ZoomX(SliderMessage),
+    ZoomY(SliderMessage),
     ShowUnknowns(bool),
-    ZoomX(f32),
-    ZoomY(f32),
     TabSwitch(usize),
     SampleTypeSelect(SampleType),
 }
@@ -275,51 +120,33 @@ impl App {
 
         let export_file = button("Export Table").on_press(Message::ExportFile);
 
-        let chart_start = self
-            .chart_start
-            .view()
-            .map(|msg| msg.map_or(Message::Done, Message::ChartStart));
+        let chart_start = self.chart_start.view().map(Message::ChartStart);
 
-        let chart_end = self
-            .chart_end
-            .view()
-            .map(|msg| msg.map_or(Message::Done, Message::ChartEnd));
+        let chart_end = self.chart_end.view().map(Message::ChartEnd);
 
         let height_requirement = self
             .height_requirement
             .view()
-            .map(|msg| msg.map_or(Message::Done, Message::HeightRequirement));
+            .map(Message::HeightRequirement);
 
         let inflection_requirement = self
             .inflection_requirement
             .view()
-            .map(|msg| msg.map_or(Message::Done, Message::InflectionRequirement));
+            .map(Message::InflectionRequirement);
 
         let retention_time_tolerance = self
             .retention_time_tolerance
             .view()
-            .map(|msg| msg.map_or(Message::Done, Message::RetentionTimeTolerance));
+            .map(Message::RetentionTimeTolerance);
 
         let glucose_unit_tolerance = self
             .glucose_unit_tolerance
             .view()
-            .map(|msg| msg.map_or(Message::Done, Message::GlucoseUnitTolerance));
+            .map(Message::GlucoseUnitTolerance);
 
-        let zoom_x = {
-            let label = text("Zoom X: ").align_x(Horizontal::Right).width(150);
-            let slider = slider(0.0..=100.0, self.global_zoom.x, Message::ZoomX).width(300);
-            let info = text(format!("{}%", f32::powf(1.1, self.global_zoom.x) * 100.0)).width(100);
+        let zoom_x = self.zoom_x.view().map(Message::ZoomX);
 
-            row![label, slider, info].spacing(10)
-        };
-
-        let zoom_y = {
-            let label = text("Zoom Y: ").align_x(Horizontal::Right).width(150);
-            let slider = slider(0.0..=100.0, self.global_zoom.y, Message::ZoomY).width(300);
-            let info = text(format!("{}%", f32::powf(1.1, self.global_zoom.y) * 100.0)).width(100);
-
-            row![label, slider, info].spacing(10)
-        };
+        let zoom_y = self.zoom_y.view().map(Message::ZoomY);
 
         let options = column![
             load_data_file,
@@ -449,13 +276,15 @@ impl App {
                         None => continue,
                     };
 
-                    sample.set_data_range(self.chart_start.value..self.chart_end.value);
+                    sample.set_data_range(self.chart_start.get_value()..self.chart_end.get_value());
                     sample.set_lipid_references(self.lipid_reference.clone());
                     sample.set_include_unknowns(self.include_unknowns);
-                    sample.set_height_requirement(self.height_requirement.value);
-                    sample.set_retention_time_tolerance(self.retention_time_tolerance.value);
-                    sample.set_glucose_unit_tolerance(self.glucose_unit_tolerance.value);
+                    sample.set_height_requirement(self.height_requirement.get_value());
+                    sample.set_retention_time_tolerance(self.retention_time_tolerance.get_value());
+                    sample.set_glucose_unit_tolerance(self.glucose_unit_tolerance.get_value());
                     sample.set_glucose_transformer(self.glucose_transformer);
+                    let zoom = Point::new(self.zoom_x.get_value(), self.zoom_y.get_value());
+                    sample.set_global_zoom(zoom);
                     self.samples.push(sample);
                 }
 
@@ -480,11 +309,9 @@ impl App {
                 })
             }
             Message::ReferenceLoad(data) => {
-                for sample in self.samples.iter_mut() {
-                    sample.set_lipid_references(data.clone());
-                }
-
+                self.update_parameter(&Chromatography::set_lipid_references, data.clone());
                 self.lipid_reference = data;
+
                 Task::none()
             }
             Message::ExportFile => {
@@ -514,10 +341,10 @@ impl App {
             }
             Message::ChartStart(message) => {
                 if let Some(unbound) = self.chart_start.update(message) {
-                    let start = f32::min(unbound, self.chart_end.value);
+                    let start = f32::min(unbound, self.chart_end.get_value());
                     self.chart_start.update(SliderMessage::Value(start));
 
-                    let range = start..self.chart_end.value;
+                    let range = start..self.chart_end.get_value();
                     self.update_parameter(&Chromatography::set_data_range, range);
                 }
 
@@ -525,10 +352,10 @@ impl App {
             }
             Message::ChartEnd(message) => {
                 if let Some(unbound) = self.chart_end.update(message) {
-                    let end = f32::max(self.chart_end.value, unbound);
+                    let end = f32::max(self.chart_end.get_value(), unbound);
                     self.chart_end.update(SliderMessage::Value(end));
 
-                    let range = self.chart_start.value..end;
+                    let range = self.chart_start.get_value()..end;
                     self.update_parameter(&Chromatography::set_data_range, range);
                 }
 
@@ -564,24 +391,22 @@ impl App {
             }
             Message::ShowUnknowns(show) => {
                 self.include_unknowns = show;
-                for sample in self.samples.iter_mut() {
-                    sample.set_include_unknowns(show);
-                }
+                self.update_parameter(&Chromatography::set_include_unknowns, show);
 
                 Task::none()
             }
             Message::ZoomX(zoom) => {
-                self.global_zoom.x = zoom;
-                for sample in self.samples.iter_mut() {
-                    sample.global_zoom.x = zoom;
+                if let Some(value) = self.zoom_x.update(zoom) {
+                    let point = Point::new(value, self.zoom_y.get_value());
+                    self.update_parameter(&Chromatography::set_global_zoom, point);
                 }
 
                 Task::none()
             }
             Message::ZoomY(zoom) => {
-                self.global_zoom.y = zoom;
-                for sample in self.samples.iter_mut() {
-                    sample.global_zoom.y = zoom;
+                if let Some(value) = self.zoom_y.update(zoom) {
+                    let point = Point::new(self.zoom_x.get_value(), value);
+                    self.update_parameter(&Chromatography::set_global_zoom, point);
                 }
 
                 Task::none()

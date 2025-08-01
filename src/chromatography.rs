@@ -593,6 +593,12 @@ impl Chromatography {
         known
     }
 
+    pub fn set_global_zoom(&mut self, zoom: Point) -> &mut Self {
+        self.global_zoom = zoom;
+
+        self
+    }
+
     pub fn into_table_element<'a>(&'a self) -> Element<'a, ()> {
         let mut table = column![];
         let title = text(format!("Total Area - {}", self.total_area))

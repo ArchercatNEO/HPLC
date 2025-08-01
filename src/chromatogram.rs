@@ -45,9 +45,9 @@ impl Chart<()> for Chromatography {
             let end = range.end + state.local_offset.x;
             let middle = (start + end) / 2.0;
 
-            let power = f32::powf(0.9, self.global_zoom.x);
-            let scaled_start = (start - middle) * state.local_zoom.x * power + middle;
-            let scaled_end = (end - middle) * state.local_zoom.x * power + middle;
+            let combined_zoom = state.local_zoom.x * (1.0 / self.global_zoom.x);
+            let scaled_start = (start - middle) * combined_zoom + middle;
+            let scaled_end = (end - middle) * combined_zoom + middle;
             scaled_start..scaled_end
         };
 
@@ -56,9 +56,9 @@ impl Chart<()> for Chromatography {
             let max = self.get_highest_point() + state.local_offset.y;
             let middle = self.get_highest_point() / 2.0 + state.local_offset.y;
 
-            let power = f32::powf(0.9, self.global_zoom.y);
-            let scaled_start = (min - middle) * state.local_zoom.y * power + middle;
-            let scaled_end = (max - middle) * state.local_zoom.y * power + middle;
+            let combined_zoom = state.local_zoom.y * (1.0 / self.global_zoom.y);
+            let scaled_start = (min - middle) * combined_zoom + middle;
+            let scaled_end = (max - middle) * combined_zoom + middle;
             scaled_start..scaled_end
         };
 

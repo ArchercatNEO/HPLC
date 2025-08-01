@@ -2,6 +2,7 @@ mod app;
 mod chromatogram;
 mod chromatography;
 mod cubic;
+mod expandable_slider;
 mod peak;
 mod reference;
 mod vector;
