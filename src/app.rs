@@ -1,14 +1,16 @@
 use std::fs;
-use std::path::PathBuf;
 
 use iced::{
     Element, Length, Point, Task,
     alignment::Horizontal,
     widget::{button, column, radio, row, scrollable, text, toggler},
 };
-use plotters_iced::ChartWidget;
+use plotters::prelude::*;
+use plotters_iced::{Chart, ChartWidget};
+use rfd::FileHandle;
 
 use crate::{
+    chromatogram::ChromatogramState,
     chromatography::{Chromatography, SampleType},
     cubic::Cubic,
     expandable_slider::{ExpandableSlider, Message as SliderMessage},
@@ -86,12 +88,14 @@ impl Default for App {
 #[derive(Clone, Debug)]
 pub enum Message {
     Done,
-    DataFile,
-    DataLoad(Vec<PathBuf>),
-    ReferenceFile,
-    ReferenceLoad(Vec<Reference>),
-    ExportFile,
-    ExportFileContent(PathBuf),
+    RequestSamplePaths,
+    LoadSampleFiles(Vec<FileHandle>),
+    RequestReferencePath,
+    LoadRefereceFile(FileHandle),
+    RequestExportCsvPath,
+    ExportCsvFile(FileHandle),
+    RequestExportProfilesPath,
+    ExportProfilesDirectory(FileHandle),
     ChartStart(SliderMessage),
     ChartEnd(SliderMessage),
     HeightRequirement(SliderMessage),
@@ -113,12 +117,15 @@ impl From<()> for Message {
 
 impl App {
     pub fn view(&self) -> Element<Message> {
-        let load_data_file = button("Load Raw Data File").on_press(Message::DataFile);
+        let load_data_file = button("Load Raw Data File").on_press(Message::RequestSamplePaths);
 
         let load_reference_file =
-            button("Load Lipid Reference File").on_press(Message::ReferenceFile);
+            button("Load Lipid Reference File").on_press(Message::RequestReferencePath);
 
-        let export_file = button("Export Table").on_press(Message::ExportFile);
+        let export_file = button("Export Table").on_press(Message::RequestExportCsvPath);
+
+        let export_profiles =
+            button("Export Profiles").on_press(Message::RequestExportProfilesPath);
 
         let chart_start = self.chart_start.view().map(Message::ChartStart);
 
@@ -152,6 +159,7 @@ impl App {
             load_data_file,
             load_reference_file,
             export_file,
+            export_profiles,
             chart_start,
             chart_end,
             height_requirement,
@@ -251,26 +259,20 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Done => Task::none(),
-            Message::DataFile => {
+            Message::RequestSamplePaths => {
                 let task = rfd::AsyncFileDialog::new()
                     .add_filter("any", &["*"])
                     .add_filter("text", &["arw", "csv", "tsv", "txt"])
                     .pick_files();
 
-                Task::perform(task, |maybe_handle| {
-                    if let Some(handles) = maybe_handle {
-                        let paths = handles
-                            .iter()
-                            .map(|handle| handle.path().to_path_buf())
-                            .collect();
-                        Message::DataLoad(paths)
-                    } else {
-                        Message::Done
-                    }
+                Task::perform(task, |maybe_handles| match maybe_handles {
+                    Some(handles) => Message::LoadSampleFiles(handles),
+                    None => Message::Done,
                 })
             }
-            Message::DataLoad(paths) => {
-                for path in paths {
+            Message::LoadSampleFiles(handles) => {
+                for handle in handles {
+                    let path = handle.path();
                     let mut sample = match Chromatography::from_file(&path) {
                         Some(value) => value,
                         None => continue,
@@ -291,51 +293,63 @@ impl App {
                 self.sample_handle = Some(self.samples.len() - 1);
                 Task::none()
             }
-            Message::ReferenceFile => {
+            Message::RequestReferencePath => {
                 let task = rfd::AsyncFileDialog::new()
                     .add_filter("any", &["*"])
                     .add_filter("text", &["arw", "csv", "tsv", "txt"])
                     .pick_file();
 
-                Task::perform(task, |maybe_handle| {
-                    if let Some(handle) = maybe_handle {
-                        let path = handle.path();
-                        let data = Reference::parse_file(&path);
-
-                        Message::ReferenceLoad(data)
-                    } else {
-                        Message::Done
-                    }
+                Task::perform(task, |maybe_handle| match maybe_handle {
+                    Some(handle) => Message::LoadRefereceFile(handle),
+                    None => Message::Done,
                 })
             }
-            Message::ReferenceLoad(data) => {
-                self.update_parameter(&Chromatography::set_lipid_references, data.clone());
-                self.lipid_reference = data;
+            Message::LoadRefereceFile(handle) => {
+                let path = handle.path();
+                let reference = Reference::parse_file(&path);
+
+                self.update_parameter(&Chromatography::set_lipid_references, reference.clone());
+                self.lipid_reference = reference;
 
                 Task::none()
             }
-            Message::ExportFile => {
+            Message::RequestExportCsvPath => {
                 let task = rfd::AsyncFileDialog::new()
                     .set_file_name("table.csv")
                     .save_file();
 
-                Task::perform(task, |maybe_handle| {
-                    if let Some(handle) = maybe_handle {
-                        let path = handle.path().to_owned();
-                        Message::ExportFileContent(path)
-                    } else {
-                        Message::Done
-                    }
+                Task::perform(task, |maybe_handle| match maybe_handle {
+                    Some(handle) => Message::ExportCsvFile(handle),
+                    None => Message::Done,
                 })
             }
-            Message::ExportFileContent(path) => {
+            Message::ExportCsvFile(handle) => {
                 let content = self.as_retention_table();
-                fs::write(path, content).expect("Cannot write there");
+                fs::write(handle.path(), content).expect("Cannot write there");
 
-                /* let mut content = String::new();
+                Task::none()
+            }
+            Message::RequestExportProfilesPath => {
+                let task = rfd::AsyncFileDialog::new().pick_folder();
+
+                Task::perform(task, |maybe_handle| match maybe_handle {
+                    Some(handle) => Message::ExportProfilesDirectory(handle),
+                    None => Message::Done,
+                })
+            }
+            Message::ExportProfilesDirectory(handle) => {
+                let root = handle.path();
+
                 for sample in &self.samples {
-                    content += &sample.into_table();
-                } */
+                    let mut path = root.join(&sample.file_name);
+                    path.set_extension("svg");
+
+                    let image = SVGBackend::new(&path, (1980, 1080)).into_drawing_area();
+                    image.fill(&WHITE).expect("failed");
+
+                    let builder = ChartBuilder::on(&image);
+                    sample.build_chart(&ChromatogramState::default(), builder);
+                }
 
                 Task::none()
             }

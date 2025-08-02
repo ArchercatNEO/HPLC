@@ -1,7 +1,8 @@
+use std::ffi::OsString;
 use std::fs;
 use std::iter::Iterator;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::Path;
 
 use iced::color;
 use iced::widget::{container, row, scrollable, text};
@@ -51,11 +52,12 @@ pub struct Chromatography {
     // Display configuration + state
     //TODO: how can we not put data that is only for rendering here?
     pub title: Option<String>,
+    pub file_name: OsString,
     pub global_zoom: Point,
 }
 
 impl Chromatography {
-    pub fn from_file(path: &PathBuf) -> Option<Self> {
+    pub fn from_file<T: AsRef<Path>>(path: &T) -> Option<Self> {
         let file = {
             match fs::read_to_string(path) {
                 Ok(content) => content,
@@ -64,6 +66,8 @@ impl Chromatography {
         };
 
         let mut empty = Chromatography::default();
+
+        empty.file_name = path.as_ref().file_name().unwrap().to_os_string();
 
         empty.title = {
             let header = file.lines().next().unwrap_or("");
