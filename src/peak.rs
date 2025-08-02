@@ -20,7 +20,6 @@ pub struct Peak {
     pub end: Point2D,
     pub height: f32,
     pub area: f32,
-    pub concentration: f32,
     pub peak_type: PeakType,
     pub reference: Option<Reference>,
 }

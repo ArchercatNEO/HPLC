@@ -46,7 +46,6 @@ pub struct Chromatography {
 
     // External references
     lipid_references: Vec<Reference>,
-    standard_peak: Option<Peak>,
     glucose_transformer: Option<Cubic>,
 
     // Display configuration + state
@@ -336,14 +335,6 @@ impl Chromatography {
         self
     }
 
-    pub fn set_standard_peak(&mut self, value: Option<Peak>) -> &mut Self {
-        self.standard_peak = value;
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
-
-        self
-    }
-
     fn mean_filter(data: &[Point2D], smoothing: usize) -> Vec<Point2D> {
         let mut smoothed = Vec::with_capacity(data.len());
 
@@ -459,9 +450,6 @@ impl Chromatography {
                     prev_min = height;
 
                     peak.end = prev.clone();
-                    if let Some(standard) = &self.standard_peak {
-                        peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
-                    }
 
                     result.push(peak);
                     peak = Peak::default();
@@ -473,10 +461,6 @@ impl Chromatography {
                     if let Some(prev_peak) = result.last_mut() {
                         prev_peak.end = prev.clone();
                         prev_peak.area += peak.area;
-                        if let Some(standard) = &self.standard_peak {
-                            prev_peak.concentration =
-                                prev_peak.area * standard.area * 40.0 * 20.0 * 0.0025;
-                        }
                     }
 
                     peak = Peak::default();
@@ -504,10 +488,6 @@ impl Chromatography {
                 peak.peak_type = PeakType::Shoulder(BLACK);
                 peak.retention_point = next.clone();
                 peak.end = next.clone();
-                if let Some(standard) = &self.standard_peak {
-                    peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
-                }
-
                 result.push(peak);
 
                 peak = Peak::default();
@@ -518,10 +498,6 @@ impl Chromatography {
 
             if falling_zero && prev_drv.y() <= 0.0 {
                 peak.end = next.clone();
-                if let Some(standard) = &self.standard_peak {
-                    peak.concentration = peak.area * standard.area * 40.0 * 20.0 * 0.0025;
-                }
-
                 result.push(peak);
 
                 peak = Peak::default();
@@ -603,7 +579,7 @@ impl Chromatography {
         self
     }
 
-    pub fn into_table_element<'a>(&'a self) -> Element<'a, ()> {
+    pub fn into_table_element<'a>(&'a self, concentration_multiplier: f32) -> Element<'a, ()> {
         let mut table = column![];
         let title = text(format!("Total Area - {}", self.total_area))
             .width(950)
@@ -660,7 +636,7 @@ impl Chromatography {
                 }
             };
 
-            let concentration = format!("{:.2}", peak.concentration);
+            let concentration = format!("{:.2}", peak.area * concentration_multiplier);
 
             let name = if let Some(reference) = &peak.reference {
                 retention_time.push_str(&format!("/{:.2}", reference.retention_time));

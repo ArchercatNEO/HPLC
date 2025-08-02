@@ -3,7 +3,7 @@ use std::fs;
 use iced::{
     Element, Length, Point, Task,
     alignment::Horizontal,
-    widget::{button, column, radio, row, scrollable, text, toggler},
+    widget::{button, column, radio, row, scrollable, text, text_input, toggler},
 };
 use plotters::prelude::*;
 use plotters_iced::{Chart, ChartWidget};
@@ -27,6 +27,10 @@ pub struct App {
     dex_handle: Option<usize>,
     glucose_transformer: Option<Cubic>,
     standard_handle: Option<usize>,
+    injected_volume: f32,
+    injected_volume_str: String,
+    sample_dilution: f32,
+    sample_dilution_str: String,
     chart_start: ExpandableSlider,
     chart_end: ExpandableSlider,
     height_requirement: ExpandableSlider,
@@ -54,6 +58,10 @@ impl Default for App {
             dex_handle: None,
             glucose_transformer: None,
             standard_handle: None,
+            injected_volume: 20.0,
+            injected_volume_str: "20.0".to_string(),
+            sample_dilution: 40.0,
+            sample_dilution_str: "40.0".to_string(),
             chart_start: ExpandableSlider::new(8.5, 0.0, 60.0, 0.5, "Chart Start"),
             chart_end: ExpandableSlider::new(36.5, 0.0, 60.0, 0.5, "Chart End"),
             height_requirement: ExpandableSlider::new(0.3, 0.0, 1.0, 0.01, "Height Requirement"),
@@ -105,8 +113,10 @@ pub enum Message {
     ZoomX(SliderMessage),
     ZoomY(SliderMessage),
     ShowUnknowns(bool),
-    TabSwitch(usize),
     SampleTypeSelect(SampleType),
+    InjectedVolume(String),
+    SampleDilution(String),
+    TabSwitch(usize),
 }
 
 impl From<()> for Message {
@@ -210,7 +220,40 @@ impl App {
             column![header, data, blank, dex, standard]
         };
 
-        let options2 = column![unknown_lipid, sample_type].width(250);
+        let warnings = {
+            let mut content = String::new();
+            if self.dex_handle.is_none() {
+                content += "Dex not set. Cannot calculate GU.\n";
+            }
+            if self.standard_handle.is_none() {
+                content += "Standard not set. Cannot calculate concentration.";
+            }
+
+            text(content).color(iced::color!(0xff0000))
+        };
+
+        let injected_volume = {
+            let label = text("Vinjection (µl): ");
+            let input =
+                text_input("20.0", &self.injected_volume_str).on_input(Message::InjectedVolume);
+            row![label, input]
+        };
+
+        let sample_dilution = {
+            let label = text("Sample Dilution: ");
+            let input =
+                text_input("40.0", &self.sample_dilution_str).on_input(Message::SampleDilution);
+            row![label, input]
+        };
+
+        let options2 = column![
+            unknown_lipid,
+            sample_type,
+            warnings,
+            injected_volume,
+            sample_dilution
+        ]
+        .width(250);
 
         let ui = if let Some(handle) = self.sample_handle {
             let header = text(format!("Sample {}", handle));
@@ -237,8 +280,19 @@ impl App {
                 scrollable(buttons)
             };
 
+            let multiplier = match self.standard_handle {
+                Some(handle) => {
+                    1000.0
+                        * (1.0 / self.injected_volume)
+                        * self.sample_dilution
+                        * 0.0025
+                        * (1.0 / self.samples[handle].peaks[1].area)
+                }
+                None => 0.0,
+            };
+
             let sample = &self.samples[handle];
-            let table = sample.into_table_element().map(Message::from);
+            let table = sample.into_table_element(multiplier).map(Message::from);
 
             let footer = row![options, options2];
             let chart: Element<()> = ChartWidget::new(sample.clone()).width(Length::Fill).into();
@@ -425,11 +479,6 @@ impl App {
 
                 Task::none()
             }
-            Message::TabSwitch(tab) => {
-                self.sample_handle = Some(tab);
-
-                Task::none()
-            }
             Message::SampleTypeSelect(sample_type) => {
                 if let Some(handle) = self.sample_handle {
                     match self.samples[handle].get_sample_type() {
@@ -473,13 +522,44 @@ impl App {
                             }
 
                             self.standard_handle = Some(handle);
-                            let peak = self.samples[handle].peaks[1].clone();
-                            self.update_parameter(&Chromatography::set_standard_peak, Some(peak));
                         }
                     }
 
                     self.samples[handle].set_sample_type(sample_type);
                 }
+
+                Task::none()
+            }
+            Message::InjectedVolume(input) => {
+                for character in input.chars() {
+                    if !character.is_ascii_digit() && character != '.' {
+                        return Task::none();
+                    }
+                }
+
+                if let Ok(value) = input.parse::<f32>() {
+                    self.injected_volume = value;
+                }
+                self.injected_volume_str = input;
+
+                Task::none()
+            }
+            Message::SampleDilution(input) => {
+                for character in input.chars() {
+                    if !character.is_ascii_digit() && character != '.' {
+                        return Task::none();
+                    }
+                }
+
+                if let Ok(value) = input.parse::<f32>() {
+                    self.sample_dilution = value;
+                }
+                self.sample_dilution_str = input;
+
+                Task::none()
+            }
+            Message::TabSwitch(tab) => {
+                self.sample_handle = Some(tab);
 
                 Task::none()
             }
@@ -573,18 +653,32 @@ impl App {
             }
         }
 
-        content.push_str("\n\nConcentrations");
-        content.push_str("\nLipid");
-        for sample in &self.samples {
-            content.push_str(&format!(",{}", sample.title.as_ref().unwrap()));
-        }
+        if let Some(handle) = self.standard_handle {
+            let multiplier = 1000.0
+                * (1.0 / self.injected_volume)
+                * self.sample_dilution
+                * 0.0025
+                * (1.0 / self.samples[handle].peaks[1].area);
 
-        for (i, reference) in self.lipid_reference.iter().enumerate() {
-            content.push('\n');
-            content.push_str(&reference.name);
+            content.push_str("\n\nConcentrations");
+            content.push_str("\nLipid");
+            content.push_str(&titles);
+
+            content.push_str("\nTotal Concentration");
             for sample in &self.samples {
-                let concentration = sample.peaks.get(i).map_or(0.0, |peak| peak.concentration);
-                content.push_str(&format!(",{}", concentration));
+                content.push_str(&format!(",{}", sample.total_area * multiplier));
+            }
+
+            for (i, reference) in self.lipid_reference.iter().enumerate() {
+                content.push('\n');
+                content.push_str(&reference.name);
+                for sample in &self.samples {
+                    let concentration = sample
+                        .lipids
+                        .get(i)
+                        .map_or(0.0, |peak| peak.area * multiplier);
+                    content.push_str(&format!(",{}", concentration));
+                }
             }
         }
 
@@ -599,7 +693,7 @@ impl App {
 
         if let Some(handle) = self.standard_handle {
             content.push_str("\nStandard Area\n");
-            content.push_str(&format!("{}", self.samples[handle].peaks[0].area));
+            content.push_str(&format!("{}", self.samples[handle].peaks[1].area));
         }
 
         content.push('\n');
