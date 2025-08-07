@@ -21,6 +21,7 @@
         pkgs.wayland
 
         pkgs.cargo
+        pkgs.cargo-edit
         pkgs.rustc
         pkgs.rustfmt
         pkgs.rust-analyzer

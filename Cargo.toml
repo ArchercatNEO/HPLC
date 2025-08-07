@@ -7,4 +7,4 @@ edition = "2024"
 iced = { version = "0.13.1", features = ["canvas", "tokio"] }
 plotters = "0.3.7"
 plotters-iced = "0.11.0"
-rfd = "0.15.3"
+rfd = "0.15.4"
