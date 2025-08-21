@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, rc::Rc};
 
 use iced::{
     Element, Length, Point, Task,
@@ -14,13 +14,14 @@ use crate::{
     chromatography::{Chromatography, SampleType},
     cubic::Cubic,
     expandable_slider::{ExpandableSlider, Message as SliderMessage},
+    peak::{Peak, PeakType},
     reference::Reference,
     vector::*,
 };
 
 #[derive(Debug)]
 pub struct App {
-    lipid_reference: Vec<Reference>,
+    lipid_reference: Rc<[Reference]>,
     samples: Vec<Chromatography>,
     sample_handle: Option<usize>,
     blank_handle: Option<usize>,
@@ -51,7 +52,7 @@ impl Default for App {
         zoom_y.set_exponential(true);
 
         Self {
-            lipid_reference: vec![],
+            lipid_reference: Rc::default(),
             samples: vec![],
             sample_handle: None,
             blank_handle: None,
@@ -286,7 +287,7 @@ impl App {
                         * (1.0 / self.injected_volume)
                         * self.sample_dilution
                         * 0.0025
-                        * (1.0 / self.samples[handle].peaks[1].area)
+                        * (1.0 / self.samples[handle].peaks[0].area)
                 }
                 None => 0.0,
             };
@@ -332,15 +333,17 @@ impl App {
                         None => continue,
                     };
 
-                    sample.set_data_range(self.chart_start.get_value()..self.chart_end.get_value());
-                    sample.set_lipid_references(self.lipid_reference.clone());
-                    sample.set_include_unknowns(self.include_unknowns);
-                    sample.set_height_requirement(self.height_requirement.get_value());
-                    sample.set_retention_time_tolerance(self.retention_time_tolerance.get_value());
-                    sample.set_glucose_unit_tolerance(self.glucose_unit_tolerance.get_value());
-                    sample.set_glucose_transformer(self.glucose_transformer);
+                    sample.set_data_range(
+                        &(self.chart_start.get_value()..self.chart_end.get_value()),
+                    );
+                    sample.set_lipid_references(Rc::clone(&self.lipid_reference));
+                    sample.set_include_unknowns(&self.include_unknowns);
+                    sample.set_height_requirement(&self.height_requirement.get_value());
+                    sample.set_retention_time_tolerance(&self.retention_time_tolerance.get_value());
+                    sample.set_glucose_unit_tolerance(&self.glucose_unit_tolerance.get_value());
+                    sample.set_glucose_transformer(&self.glucose_transformer);
                     let zoom = Point::new(self.zoom_x.get_value(), self.zoom_y.get_value());
-                    sample.set_global_zoom(zoom);
+                    sample.set_global_zoom(&zoom);
                     self.samples.push(sample);
                 }
 
@@ -361,9 +364,11 @@ impl App {
             Message::LoadRefereceFile(handle) => {
                 let path = handle.path();
                 let reference = Reference::parse_file(&path);
+                self.lipid_reference = Rc::from(reference.as_slice());
 
-                self.update_parameter(&Chromatography::set_lipid_references, reference.clone());
-                self.lipid_reference = reference;
+                for sample in self.samples.iter_mut() {
+                    sample.set_lipid_references(Rc::clone(&self.lipid_reference));
+                }
 
                 Task::none()
             }
@@ -413,7 +418,9 @@ impl App {
                     self.chart_start.update(SliderMessage::Value(start));
 
                     let range = start..self.chart_end.get_value();
-                    self.update_parameter(&Chromatography::set_data_range, range);
+                    for sample in self.samples.iter_mut() {
+                        sample.set_data_range(&range);
+                    }
                 }
 
                 Task::none()
@@ -424,49 +431,63 @@ impl App {
                     self.chart_end.update(SliderMessage::Value(end));
 
                     let range = self.chart_start.get_value()..end;
-                    self.update_parameter(&Chromatography::set_data_range, range);
+                    for sample in self.samples.iter_mut() {
+                        sample.set_data_range(&range);
+                    }
                 }
 
                 Task::none()
             }
             Message::HeightRequirement(message) => {
                 if let Some(value) = self.height_requirement.update(message) {
-                    self.update_parameter(&Chromatography::set_height_requirement, value);
+                    for sample in self.samples.iter_mut() {
+                        sample.set_height_requirement(&value);
+                    }
                 }
 
                 Task::none()
             }
             Message::InflectionRequirement(message) => {
                 if let Some(value) = self.inflection_requirement.update(message) {
-                    self.update_parameter(&Chromatography::set_inflection_requirement, value);
+                    for sample in self.samples.iter_mut() {
+                        sample.set_inflection_requirement(&value);
+                    }
                 }
 
                 Task::none()
             }
             Message::RetentionTimeTolerance(message) => {
                 if let Some(value) = self.retention_time_tolerance.update(message) {
-                    self.update_parameter(&Chromatography::set_retention_time_tolerance, value);
+                    for sample in self.samples.iter_mut() {
+                        sample.set_retention_time_tolerance(&value);
+                    }
                 }
 
                 Task::none()
             }
             Message::GlucoseUnitTolerance(message) => {
                 if let Some(value) = self.glucose_unit_tolerance.update(message) {
-                    self.update_parameter(&Chromatography::set_glucose_unit_tolerance, value);
+                    for sample in self.samples.iter_mut() {
+                        sample.set_glucose_unit_tolerance(&value);
+                    }
                 }
 
                 Task::none()
             }
             Message::ShowUnknowns(show) => {
                 self.include_unknowns = show;
-                self.update_parameter(&Chromatography::set_include_unknowns, show);
+                for sample in self.samples.iter_mut() {
+                    sample.set_include_unknowns(&show);
+                }
 
                 Task::none()
             }
             Message::ZoomX(zoom) => {
                 if let Some(value) = self.zoom_x.update(zoom) {
                     let point = Point::new(value, self.zoom_y.get_value());
-                    self.update_parameter(&Chromatography::set_global_zoom, point);
+                    for sample in self.samples.iter_mut() {
+                        sample.set_global_zoom(&point);
+                    }
                 }
 
                 Task::none()
@@ -474,7 +495,9 @@ impl App {
             Message::ZoomY(zoom) => {
                 if let Some(value) = self.zoom_y.update(zoom) {
                     let point = Point::new(self.zoom_x.get_value(), value);
-                    self.update_parameter(&Chromatography::set_global_zoom, point);
+                    for sample in self.samples.iter_mut() {
+                        sample.set_global_zoom(&point);
+                    }
                 }
 
                 Task::none()
@@ -498,34 +521,33 @@ impl App {
                         SampleType::Data => (),
                         SampleType::Blank => {
                             if let Some(blank_handle) = self.blank_handle {
-                                self.samples[blank_handle].set_sample_type(SampleType::Data);
+                                self.samples[blank_handle].set_sample_type(&SampleType::Data);
                             }
 
                             self.blank_handle = Some(handle);
                         }
                         SampleType::Dex => {
                             if let Some(dex_handle) = self.dex_handle {
-                                self.samples[dex_handle].set_sample_type(SampleType::Data);
+                                self.samples[dex_handle].set_sample_type(&SampleType::Data);
                             }
 
                             self.dex_handle = Some(handle);
                             self.glucose_transformer =
                                 Some(self.samples[handle].get_glucose_transformer());
-                            self.update_parameter(
-                                &Chromatography::set_glucose_transformer,
-                                self.glucose_transformer,
-                            );
+                            for sample in self.samples.iter_mut() {
+                                sample.set_glucose_transformer(&self.glucose_transformer);
+                            }
                         }
                         SampleType::Standard => {
                             if let Some(standard_handle) = self.standard_handle {
-                                self.samples[standard_handle].set_sample_type(SampleType::Data);
+                                self.samples[standard_handle].set_sample_type(&SampleType::Data);
                             }
 
                             self.standard_handle = Some(handle);
                         }
                     }
 
-                    self.samples[handle].set_sample_type(sample_type);
+                    self.samples[handle].set_sample_type(&sample_type);
                 }
 
                 Task::none()
@@ -566,70 +588,59 @@ impl App {
         }
     }
 
-    fn update_parameter<
-        TParam: Clone,
-        TFun: Fn(&mut Chromatography, TParam) -> &mut Chromatography,
-    >(
-        &mut self,
-        func: &TFun,
-        value: TParam,
-    ) {
-        for sample in self.samples.iter_mut() {
-            func(sample, value.clone());
-        }
-
-        if let Some(handle) = self.dex_handle {
-            let sample = &mut self.samples[handle];
-
-            let new_transformer = Some(sample.get_glucose_transformer());
-            if self.glucose_transformer != new_transformer {
-                self.glucose_transformer = new_transformer;
-                for sample in self.samples.iter_mut() {
-                    sample.set_glucose_transformer(new_transformer);
-                }
-            }
-        }
-    }
-
     fn as_retention_table(&self) -> String {
         let mut titles = String::new();
         for sample in &self.samples {
-            titles.push_str(&format!(",{}", sample.title.as_ref().unwrap()));
+            titles.push_str(&format!(",{}", &sample.title));
         }
 
         let mut content = String::from("Retention Times\n");
         content.push_str("Lipid,Expected Time (m)");
         content.push_str(&titles);
 
+        let zero_or_rt = |peak: &Peak| match &peak.peak_type {
+            PeakType::Missing(_) => ",".to_string(),
+            _ => {
+                format!(",{}", peak.retention_point.x())
+            }
+        };
+
         for (i, reference) in self.lipid_reference.iter().enumerate() {
-            content.push_str("\n");
-            content.push_str(&reference.name);
-            content.push_str(&format!(",{}", reference.retention_time));
-            for sample in &self.samples {
-                let retention_time = sample
-                    .lipids
-                    .get(i)
-                    .map_or(0.0, |peak| peak.retention_point.x());
-                content.push_str(&format!(",{}", retention_time));
+            if let Some(time) = reference.retention_time {
+                content.push_str("\n");
+                content.push_str(reference.name.as_ref().map_or("[Unnamed]", |inner| &inner));
+                content.push_str(&format!(",{}", time));
+                for sample in &self.samples {
+                    let retention_time = sample.lipids.get(i).map_or(",".to_string(), zero_or_rt);
+                    content.push_str(&retention_time);
+                }
             }
         }
 
         if let Some(function) = self.glucose_transformer {
             content.push_str("\n\n");
             content.push_str("Glucose Units\n");
-            content.push_str("Lipid,Expected GU (m)");
+            content.push_str("Lipid,Expected GU");
             content.push_str(&titles);
+
+            let zero_or_gu = |peak: &Peak| match &peak.peak_type {
+                PeakType::Missing(_) => ",".to_string(),
+                _ => {
+                    format!(",{}", function.evaluate(peak.retention_point.x()))
+                }
+            };
 
             for (i, reference) in self.lipid_reference.iter().enumerate() {
                 content.push_str("\n");
-                content.push_str(&reference.name);
-                content.push_str(&format!(",{}", reference.glucose_units));
+                content.push_str(reference.name.as_ref().map_or("[Unnamed]", |inner| &inner));
+                if let Some(gu) = reference.glucose_units {
+                    content.push_str(&format!(",{}", gu));
+                } else {
+                    content.push_str(",");
+                }
                 for sample in &self.samples {
-                    let retention_time = sample
-                        .lipids
-                        .get(i)
-                        .map_or(0.0, |peak| function.evaluate(peak.retention_point.x()));
-                    content.push_str(&format!(",{}", retention_time));
+                    let retention_time = sample.lipids.get(i).map_or(",".to_string(), zero_or_gu);
+                    content.push_str(&retention_time);
                 }
             }
         }
@@ -646,7 +657,7 @@ impl App {
 
         for (i, reference) in self.lipid_reference.iter().enumerate() {
             content.push('\n');
-            content.push_str(&reference.name);
+            content.push_str(reference.name.as_ref().map_or("[Unnamed]", |inner| &inner));
             for sample in &self.samples {
                 let area = sample.lipids.get(i).map_or(0.0, |peak| peak.area);
                 content.push_str(&format!(",{}", area));
@@ -658,7 +669,7 @@ impl App {
                 * (1.0 / self.injected_volume)
                 * self.sample_dilution
                 * 0.0025
-                * (1.0 / self.samples[handle].peaks[1].area);
+                * (1.0 / self.samples[handle].peaks[0].area);
 
             content.push_str("\n\nConcentrations");
             content.push_str("\nLipid");
@@ -671,7 +682,7 @@ impl App {
 
             for (i, reference) in self.lipid_reference.iter().enumerate() {
                 content.push('\n');
-                content.push_str(&reference.name);
+                content.push_str(reference.name.as_ref().map_or("[Unnamed]", |inner| &inner));
                 for sample in &self.samples {
                     let concentration = sample
                         .lipids
@@ -682,18 +693,44 @@ impl App {
             }
         }
 
-        content.push_str("\n\nUnknown Peaks");
-        content.push_str("\nSample,Retention Time (m),Area\n");
-        for (index, sample) in self.samples.iter().enumerate() {
-            for peak in sample.peaks.iter().filter(|peak| peak.reference.is_none()) {
-                let entry = format!("{},{},{}\n", index, peak.retention_point.x(), peak.area);
-                content.push_str(&entry);
+        content.push_str("\n\nDiscovered Peaks");
+
+        if let Some(function) = self.glucose_transformer {
+            content.push_str("\n\nGlucose Units");
+            content.push_str("\nPeak");
+            content.push_str(&titles);
+
+            let mut peak_sets: Vec<_> = self
+                .samples
+                .iter()
+                .map(|sample| sample.peaks.iter())
+                .collect();
+
+            let mut index = 0;
+            let mut exhausted = false;
+            while !exhausted {
+                exhausted = true;
+                content.push_str(&format!("\n{}", index));
+
+                for peaks in &mut peak_sets {
+                    if let Some(peak) = peaks.next() {
+                        exhausted = false;
+                        let gu = function.evaluate(peak.retention_point.x());
+                        content.push_str(&format!(",{}", gu));
+                    } else {
+                        content.push_str(",");
+                    }
+                }
+
+                index += 1;
             }
+        } else {
+            content.push_str("\n\nDex not set. Cannot calculate GU");
         }
 
         if let Some(handle) = self.standard_handle {
             content.push_str("\nStandard Area\n");
-            content.push_str(&format!("{}", self.samples[handle].peaks[1].area));
+            content.push_str(&format!("{}", self.samples[handle].peaks[0].area));
         }
 
         content.push('\n');

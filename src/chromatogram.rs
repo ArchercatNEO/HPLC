@@ -62,10 +62,8 @@ impl Chart<()> for Chromatography {
             scaled_start..scaled_end
         };
 
-        let title = self.title.as_ref().map_or("HPLC", |string| &string);
-
         let mut chart = builder
-            .caption(title, ("sans-serif", 30).into_font())
+            .caption(&self.title, ("sans-serif", 30).into_font())
             .margin(40)
             .x_label_area_size(40)
             .y_label_area_size(40)

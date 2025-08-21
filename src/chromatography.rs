@@ -3,11 +3,11 @@ use std::fs;
 use std::iter::Iterator;
 use std::ops::Range;
 use std::path::Path;
+use std::rc::Rc;
 
 use iced::color;
 use iced::widget::{container, row, scrollable, text};
 use iced::{Element, Point, widget::column};
-use plotters::style::BLACK;
 
 use crate::cubic::Cubic;
 use crate::peak::{Peak, PeakType};
@@ -45,12 +45,12 @@ pub struct Chromatography {
     glucose_unit_tolerance: f32,
 
     // External references
-    lipid_references: Vec<Reference>,
+    lipid_references: Rc<[Reference]>,
     glucose_transformer: Option<Cubic>,
 
     // Display configuration + state
     //TODO: how can we not put data that is only for rendering here?
-    pub title: Option<String>,
+    pub title: String,
     pub file_name: OsString,
     pub global_zoom: Point,
 }
@@ -69,10 +69,18 @@ impl Chromatography {
         empty.file_name = path.as_ref().file_name().unwrap().to_os_string();
 
         empty.title = {
-            let header = file.lines().next().unwrap_or("");
-            let mut data = header.split("\t");
-            data.next();
-            data.next().map(|slice| slice.to_string())
+            let mut name = empty.file_name.clone().into_string().unwrap();
+
+            for line in file.lines() {
+                let mut pair = line.split("\t");
+                if let Some(key) = pair.next() {
+                    if key == "\"SampleName\"" {
+                        name = pair.next().unwrap().to_string();
+                    }
+                }
+            }
+
+            name
         };
 
         empty.raw_data = file
@@ -129,7 +137,7 @@ impl Chromatography {
         }
     }
 
-    pub fn set_data_range(&mut self, value: Range<f32>) -> &mut Self {
+    pub fn set_data_range(&mut self, value: &Range<f32>) -> &mut Self {
         let filter: Vec<Point2D> = self
             .raw_data
             .iter()
@@ -137,7 +145,7 @@ impl Chromatography {
             .filter(|point| value.contains(&point.x()))
             .collect();
 
-        self.data_range = Some(value);
+        self.data_range = Some(value.clone());
         self.cleaned_data = Self::mean_filter(&filter, 5);
         self.first_derivative = Self::calculate_derivative(&self.cleaned_data);
         self.second_derivative = Self::calculate_derivative(&self.first_derivative);
@@ -159,7 +167,7 @@ impl Chromatography {
         highest
     }
 
-    pub fn set_lipid_references(&mut self, value: Vec<Reference>) -> &mut Self {
+    pub fn set_lipid_references(&mut self, value: Rc<[Reference]>) -> &mut Self {
         self.lipid_references = value;
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
@@ -167,39 +175,39 @@ impl Chromatography {
         self
     }
 
-    pub fn set_include_unknowns(&mut self, show: bool) -> &mut Self {
-        self.include_unknowns = show;
+    pub fn set_include_unknowns(&mut self, show: &bool) -> &mut Self {
+        self.include_unknowns = *show;
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn set_height_requirement(&mut self, value: f32) -> &mut Self {
-        self.height_requirement = value;
+    pub fn set_height_requirement(&mut self, value: &f32) -> &mut Self {
+        self.height_requirement = *value;
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn set_inflection_requirement(&mut self, value: f32) -> &mut Self {
-        self.inflection_requirement = value;
+    pub fn set_inflection_requirement(&mut self, value: &f32) -> &mut Self {
+        self.inflection_requirement = *value;
         self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn set_retention_time_tolerance(&mut self, value: f32) -> &mut Self {
-        self.retention_time_tolerance = value;
+    pub fn set_retention_time_tolerance(&mut self, value: &f32) -> &mut Self {
+        self.retention_time_tolerance = *value;
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn set_glucose_unit_tolerance(&mut self, value: f32) -> &mut Self {
-        self.glucose_unit_tolerance = value;
+    pub fn set_glucose_unit_tolerance(&mut self, value: &f32) -> &mut Self {
+        self.glucose_unit_tolerance = *value;
         self.lipids = self.label_peaks();
 
         self
@@ -313,8 +321,8 @@ impl Chromatography {
         Some(x)
     }
 
-    pub fn set_glucose_transformer(&mut self, transformer: Option<Cubic>) -> &mut Self {
-        self.glucose_transformer = transformer;
+    pub fn set_glucose_transformer(&mut self, transformer: &Option<Cubic>) -> &mut Self {
+        self.glucose_transformer = transformer.clone();
         self.lipids = self.label_peaks();
 
         self
@@ -324,13 +332,8 @@ impl Chromatography {
         self.sample_type
     }
 
-    pub fn set_sample_type(&mut self, value: SampleType) -> &mut Self {
-        self.sample_type = value;
-
-        if value == SampleType::Dex {
-            let transformer = self.get_glucose_transformer();
-            self.title = Some(format!("{:?}", transformer));
-        }
+    pub fn set_sample_type(&mut self, value: &SampleType) -> &mut Self {
+        self.sample_type = value.clone();
 
         self
     }
@@ -421,7 +424,7 @@ impl Chromatography {
         let mut peak = Peak::default();
         peak.start = data[0].clone();
 
-        let mut new_peak = true;
+        let mut new_peak = false;
         let mut prev_min = data[0].y() - self.baseline[0].y();
 
         for index in 4..(data.len() - 4) {
@@ -485,7 +488,6 @@ impl Chromatography {
             let rising_zero = prev_drv2.y() <= 0.0 && next_drv2.y() >= 0.0;
 
             if rising_zero && prev_drv.y() >= 0.0 {
-                peak.peak_type = PeakType::Shoulder(BLACK);
                 peak.retention_point = next.clone();
                 peak.end = next.clone();
                 result.push(peak);
@@ -503,7 +505,6 @@ impl Chromatography {
                 peak = Peak::default();
                 peak.start = next.clone();
                 peak.retention_point = next.clone();
-                peak.peak_type = PeakType::Shoulder(BLACK);
             }
         }
 
@@ -513,9 +514,20 @@ impl Chromatography {
     fn label_peaks(&mut self) -> Vec<Peak> {
         let mut known: Vec<Peak> = vec![];
 
+        let transformer = match self.glucose_transformer {
+            Some(cubic) => cubic,
+            None => Cubic::default(),
+        };
+
         for peak in self.peaks.iter_mut() {
-            peak.reference = None;
+            peak.peak_type = PeakType::Unknown;
+            peak.gu = transformer.evaluate(peak.retention_point.x())
         }
+
+        let tolerance = match self.glucose_transformer {
+            Some(_) => self.glucose_unit_tolerance,
+            None => self.retention_time_tolerance,
+        };
 
         for reference in self.lipid_references.iter() {
             for i in 1..self.peaks.len() {
@@ -523,26 +535,24 @@ impl Chromatography {
                 let prev = left.last_mut().unwrap();
                 let next = &mut right[0];
 
-                let transform = self.glucose_transformer.unwrap_or(Cubic::default());
+                let start = transformer.evaluate(prev.retention_point.x());
+                let end = transformer.evaluate(next.retention_point.x());
 
-                let start = transform.evaluate(prev.retention_point.x());
-                let end = transform.evaluate(next.retention_point.x());
-
-                let expected = if self.glucose_transformer.is_none() {
-                    reference.retention_time
+                let expected = if let Some(gu) = reference.glucose_units {
+                    if self.glucose_transformer.is_some() {
+                        gu
+                    } else {
+                        reference.retention_time.unwrap()
+                    }
+                } else if let Some(retention) = reference.retention_time {
+                    transformer.evaluate(retention)
                 } else {
-                    reference.glucose_units
-                };
-
-                let tolerance = if self.glucose_transformer.is_none() {
-                    self.retention_time_tolerance
-                } else {
-                    self.glucose_unit_tolerance
+                    continue;
                 };
 
                 // A lipid may be expected before the first peak (and is therefore not between 2 peaks)
                 if f32::abs(expected - start) < tolerance {
-                    prev.reference = Some(reference.clone());
+                    prev.peak_type = PeakType::Common(reference.clone());
                     known.push(prev.clone());
                     break;
                 }
@@ -553,15 +563,14 @@ impl Chromatography {
                     let dist2 = end - expected;
 
                     if dist1 < dist2 && dist1 < tolerance {
-                        prev.reference = Some(reference.clone());
+                        prev.peak_type = PeakType::Common(reference.clone());
                         known.push(prev.clone());
                     } else if dist2 < tolerance {
-                        next.reference = Some(reference.clone());
+                        next.peak_type = PeakType::Common(reference.clone());
                         known.push(next.clone());
                     } else {
                         let mut fake = Peak::default();
-                        fake.reference = Some(reference.clone());
-                        fake.peak_type = PeakType::Reference;
+                        fake.peak_type = PeakType::Missing(reference.clone());
                         known.push(fake);
                     }
 
@@ -573,13 +582,13 @@ impl Chromatography {
         known
     }
 
-    pub fn set_global_zoom(&mut self, zoom: Point) -> &mut Self {
-        self.global_zoom = zoom;
+    pub fn set_global_zoom(&mut self, zoom: &Point) -> &mut Self {
+        self.global_zoom = zoom.clone();
 
         self
     }
 
-    pub fn into_table_element<'a>(&'a self, concentration_multiplier: f32) -> Element<'a, ()> {
+    pub fn into_table_element<'b>(&'b self, concentration_multiplier: f32) -> Element<'b, ()> {
         let mut table = column![];
         let title = text(format!("Total Area - {}", self.total_area))
             .width(950)
@@ -625,10 +634,9 @@ impl Chromatography {
             let mut retention_time = format!("{:.2}", peak.retention_point.x());
             let area = format!("{:.2}", peak.area);
 
-            let mut glucose_units = {
-                if peak.retention_point.x() == 0.0 {
-                    "0.00".to_string()
-                } else {
+            let mut glucose_units = match &peak.peak_type {
+                PeakType::Missing(_) => "0.00".to_string(),
+                _ => {
                     let value = self
                         .glucose_transformer
                         .map_or(0.0, |function| function.evaluate(peak.retention_point.x()));
@@ -638,13 +646,30 @@ impl Chromatography {
 
             let concentration = format!("{:.2}", peak.area * concentration_multiplier);
 
-            let name = if let Some(reference) = &peak.reference {
-                retention_time.push_str(&format!("/{:.2}", reference.retention_time));
-                glucose_units.push_str(&format!("/{:.2}", reference.glucose_units));
+            let name = match &peak.peak_type {
+                PeakType::Unknown => "Unknown",
+                PeakType::Common(reference) => {
+                    if let Some(time) = reference.retention_time {
+                        retention_time.push_str(&format!("/{:.2}", time));
+                    }
 
-                reference.name.clone()
-            } else {
-                "Unknown".to_string()
+                    if let Some(gu) = reference.glucose_units {
+                        glucose_units.push_str(&format!("/{:.2}", gu));
+                    }
+
+                    reference.name.as_ref().map_or("[Unnamed]", |inner| &inner)
+                }
+                PeakType::Missing(reference) => {
+                    if let Some(time) = reference.retention_time {
+                        retention_time.push_str(&format!("/{:.2}", time));
+                    }
+
+                    if let Some(gu) = reference.glucose_units {
+                        glucose_units.push_str(&format!("/{:.2}", gu));
+                    }
+
+                    reference.name.as_ref().map_or("[Unnamed]", |inner| &inner)
+                }
             };
 
             let content = row![

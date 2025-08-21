@@ -1,11 +1,11 @@
 use std::fs;
 use std::path;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Reference {
-    pub name: String,
-    pub retention_time: f32,
-    pub glucose_units: f32,
+    pub name: Option<String>,
+    pub retention_time: Option<f32>,
+    pub glucose_units: Option<f32>,
 }
 
 impl Reference {
@@ -26,11 +26,9 @@ impl Reference {
 
                 let funcs: Vec<ReferenceFn> = entries
                     .map(|entry| {
-                        println!("{}", entry);
-
                         if entry == "Name" {
                             &Reference::parse_name
-                        } else if entry == "Retention Time" {
+                        } else if entry == "RT" {
                             &Reference::parse_retention_time
                         } else if entry == "GU" {
                             &Reference::parse_glucose_units
@@ -42,7 +40,7 @@ impl Reference {
                     .collect();
 
                 lines
-                    .map(|line| {
+                    .filter_map(|line| {
                         let mut reference = Reference::default();
 
                         let entries = if line.contains("\t") {
@@ -55,7 +53,15 @@ impl Reference {
                             reference = func(reference, entry);
                         }
 
-                        reference
+                        if reference.retention_time.is_none() && reference.glucose_units.is_none() {
+                            println!(
+                                "Lipid {} needs at least one of retention time or GU",
+                                reference.name.unwrap()
+                            );
+                            None
+                        } else {
+                            Some(reference)
+                        }
                     })
                     .collect()
             }
@@ -71,23 +77,19 @@ impl Reference {
     }
 
     pub fn parse_name(mut self, name: &str) -> Self {
-        self.name = name.trim().to_string();
+        self.name = Some(name.trim().to_string());
 
         self
     }
 
     pub fn parse_retention_time(mut self, retention_time: &str) -> Self {
-        if let Ok(time) = retention_time.parse::<f32>() {
-            self.retention_time = time;
-        }
+        self.retention_time = retention_time.parse::<f32>().map_or(None, Some);
 
         self
     }
 
     pub fn parse_glucose_units(mut self, glucose_units: &str) -> Self {
-        if let Ok(gu) = glucose_units.parse::<f32>() {
-            self.glucose_units = gu;
-        }
+        self.glucose_units = glucose_units.parse::<f32>().map_or(None, Some);
 
         self
     }

@@ -5,23 +5,23 @@ use plotters::{
 
 use crate::{reference::Reference, vector::*};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum PeakType {
     #[default]
-    Standard,
-    Shoulder(RGBColor),
-    Reference,
+    Unknown,
+    Common(Reference),
+    Missing(Reference),
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Peak {
     pub start: Point2D,
     pub retention_point: Point2D,
+    pub gu: f32,
     pub end: Point2D,
     pub height: f32,
     pub area: f32,
     pub peak_type: PeakType,
-    pub reference: Option<Reference>,
 }
 
 impl<'a> PointCollection<'a, Point2D> for &'a Peak {
@@ -43,42 +43,40 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
         (),
         plotters_iced::plotters_backend::DrawingErrorKind<<DB as DrawingBackend>::ErrorType>,
     > {
-        match self.peak_type {
-            PeakType::Standard => {
+        match &self.peak_type {
+            PeakType::Unknown => {
+                // Peak which has no reference
                 backend.draw_circle(pos.next().unwrap(), 3, &BLUE, true)?;
 
                 let retention = pos.next().unwrap();
-                let text = self
-                    .reference
-                    .as_ref()
-                    .map_or("Unknown", |reference| &reference.name);
+                let text = format!("[Unknown, {}]", self.gu);
 
-                backend.draw_text(
-                    &text,
-                    &("sans-serif", 10).into_text_style(&parent_dim),
-                    retention,
-                )?;
                 backend.draw_circle(retention, 3, &GREEN, true)?;
-            }
-            PeakType::Shoulder(color) => {
-                let start = pos.next().unwrap();
-                let retention = pos.next().unwrap();
-
-                backend.draw_circle(start, 3, &color, true)?;
-                backend.draw_circle(retention, 3, &color, true)?;
-
-                let text = self
-                    .reference
-                    .as_ref()
-                    .map_or("Unknown", |reference| &reference.name);
                 backend.draw_text(
                     &text,
                     &("sans-serif", 10).into_text_style(&parent_dim),
                     retention,
                 )?;
             }
-            PeakType::Reference => {
-                // Reference peaks are not drawn
+            PeakType::Common(reference) => {
+                // Peak which is both in data and reference
+
+                backend.draw_circle(pos.next().unwrap(), 3, &BLUE, true)?;
+
+                let retention = pos.next().unwrap();
+                backend.draw_circle(retention, 3, &GREEN, true)?;
+
+                let text = reference.name.as_ref().map_or("[Unnamed]", |name| &name);
+                let text = format!("[{}, {}]", text, self.gu);
+
+                backend.draw_text(
+                    &text,
+                    &("sans-serif", 10).into_text_style(&parent_dim),
+                    retention,
+                )?;
+            }
+            PeakType::Missing(_) => {
+                // Peak that is missing from the data but in the reference
             }
         }
 
