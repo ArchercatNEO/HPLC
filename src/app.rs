@@ -510,6 +510,10 @@ impl App {
                             self.blank_handle = None;
                         }
                         SampleType::Dex => {
+                            for sample in self.samples.iter_mut() {
+                                sample.set_glucose_transformer(&None);
+                            }
+
                             self.dex_handle = None;
                         }
                         SampleType::Standard => {
@@ -517,20 +521,14 @@ impl App {
                         }
                     };
 
+                    self.samples[handle].set_sample_type(&sample_type);
+
                     match sample_type {
                         SampleType::Data => (),
                         SampleType::Blank => {
-                            if let Some(blank_handle) = self.blank_handle {
-                                self.samples[blank_handle].set_sample_type(&SampleType::Data);
-                            }
-
                             self.blank_handle = Some(handle);
                         }
                         SampleType::Dex => {
-                            if let Some(dex_handle) = self.dex_handle {
-                                self.samples[dex_handle].set_sample_type(&SampleType::Data);
-                            }
-
                             self.dex_handle = Some(handle);
                             self.glucose_transformer =
                                 Some(self.samples[handle].get_glucose_transformer());
@@ -539,15 +537,9 @@ impl App {
                             }
                         }
                         SampleType::Standard => {
-                            if let Some(standard_handle) = self.standard_handle {
-                                self.samples[standard_handle].set_sample_type(&SampleType::Data);
-                            }
-
                             self.standard_handle = Some(handle);
                         }
                     }
-
-                    self.samples[handle].set_sample_type(&sample_type);
                 }
 
                 Task::none()
