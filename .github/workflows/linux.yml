@@ -1,0 +1,19 @@
+name: Linux Artifacts
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Build
+        run: cargo build --verbose --release
+      
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hplc-rs
+          path: ./target/release/HPLC-RS
