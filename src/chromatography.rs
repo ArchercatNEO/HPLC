@@ -9,9 +9,9 @@ use iced::color;
 use iced::widget::{container, row, scrollable, text};
 use iced::{Element, Point, widget::column};
 
-use crate::cubic::Cubic;
 use crate::peak::{Peak, PeakType};
 use crate::reference::Reference;
+use crate::spline::Spline;
 use crate::vector::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -46,7 +46,7 @@ pub struct Chromatography {
 
     // External references
     lipid_references: Rc<[Reference]>,
-    glucose_transformer: Option<Cubic>,
+    glucose_transformer: Option<Spline>,
 
     // Display configuration + state
     //TODO: how can we not put data that is only for rendering here?
@@ -71,7 +71,7 @@ impl Chromatography {
         empty.title = {
             let mut name = empty.file_name.clone().into_string().unwrap();
 
-            for line in file.lines() {
+            for line in file.split('\r') {
                 let mut pair = line.split("\t");
                 if let Some(key) = pair.next() {
                     if key == "\"SampleName\"" {
@@ -84,7 +84,7 @@ impl Chromatography {
         };
 
         empty.raw_data = file
-            .lines()
+            .split('\r')
             .filter_map(|line| {
                 let mut data = if line.contains("\t") {
                     line.split("\t")
@@ -213,7 +213,7 @@ impl Chromatography {
         self
     }
 
-    pub fn get_glucose_transformer(&self) -> Cubic {
+    pub fn get_glucose_transformer(&mut self) -> Option<Spline> {
         let mut intersections: Vec<Point2D> = vec![];
 
         for peak in &self.peaks {
@@ -225,103 +225,16 @@ impl Chromatography {
             intersections.push(retention);
         }
 
-        // Method of least squares (cubic interpolation)
-        // f(x) = ax^3 + bx^2 + cx + d
-        let x0 = intersections.len() as f32;
-        let x1: f32 = intersections.iter().map(|point| point.x()).sum();
-        let x2: f32 = intersections.iter().map(|point| point.x().powi(2)).sum();
-        let x3: f32 = intersections.iter().map(|point| point.x().powi(3)).sum();
-        let x4: f32 = intersections.iter().map(|point| point.x().powi(4)).sum();
-        let x5: f32 = intersections.iter().map(|point| point.x().powi(5)).sum();
-        let x6: f32 = intersections.iter().map(|point| point.x().powi(6)).sum();
-
-        let y1: f32 = intersections
+        let points: Vec<Point2D> = intersections
             .iter()
             .enumerate()
-            .map(|(index, _)| (index + 2) as f32)
-            .sum();
-        let y1x1: f32 = intersections
-            .iter()
-            .enumerate()
-            .map(|(index, point)| ((index + 2) as f32) * point.x())
-            .sum();
-        let y1x2: f32 = intersections
-            .iter()
-            .enumerate()
-            .map(|(index, point)| ((index + 2) as f32) * point.x().powi(2))
-            .sum();
-        let y1x3: f32 = intersections
-            .iter()
-            .enumerate()
-            .map(|(index, point)| ((index + 2) as f32) * point.x().powi(3))
-            .sum();
+            .map(|(i, point)| Point2D::new(point.x(), (i + 2) as f32))
+            .collect();
 
-        let mut matrix = [
-            vec![x6, x5, x4, x3],
-            vec![x5, x4, x3, x2],
-            vec![x4, x3, x2, x1],
-            vec![x3, x2, x1, x0],
-        ];
-
-        let mut values = [y1x3, y1x2, y1x1, y1];
-
-        let solution = Self::solve_matrix(&mut matrix, &mut values).unwrap();
-
-        let a = solution[0];
-        let b = solution[1];
-        let c = solution[2];
-        let d = solution[3];
-
-        let function = Cubic::new(a, b, c, d);
-
-        function
+        Spline::new(&points)
     }
 
-    fn solve_matrix(matrix: &mut [Vec<f32>], values: &mut [f32]) -> Option<Vec<f32>> {
-        let order = matrix.len();
-
-        for i in 0..order {
-            // Partial pivoting
-            let mut max_row = i;
-            for k in (i + 1)..order {
-                if matrix[k][i].abs() > matrix[max_row][i].abs() {
-                    max_row = k;
-                }
-            }
-
-            // Swap rows in matrix and vector
-            matrix.swap(i, max_row);
-            values.swap(i, max_row);
-
-            // Check for singular matrix
-            if matrix[i][i].abs() < 1e-12 {
-                return None; // Singular or nearly singular matrix
-            }
-
-            // Eliminate entries below pivot
-            for k in (i + 1)..order {
-                let factor = matrix[k][i] / matrix[i][i];
-                for j in i..order {
-                    matrix[k][j] -= factor * matrix[i][j];
-                }
-                values[k] -= factor * values[i];
-            }
-        }
-
-        // Back substitution
-        let mut x = vec![0.0; order];
-        for i in (0..order).rev() {
-            let mut sum = values[i];
-            for j in (i + 1)..order {
-                sum -= matrix[i][j] * x[j];
-            }
-            x[i] = sum / matrix[i][i];
-        }
-
-        Some(x)
-    }
-
-    pub fn set_glucose_transformer(&mut self, transformer: &Option<Cubic>) -> &mut Self {
+    pub fn set_glucose_transformer(&mut self, transformer: &Option<Spline>) -> &mut Self {
         self.glucose_transformer = transformer.clone();
         self.lipids = self.label_peaks();
 
@@ -341,16 +254,16 @@ impl Chromatography {
     fn mean_filter(data: &[Point2D], smoothing: usize) -> Vec<Point2D> {
         let mut smoothed = Vec::with_capacity(data.len());
 
-        for i in 0..data.len() {
+        for i in smoothing..data.len() - smoothing {
             let mut total = 0.0;
-            let start = i.saturating_sub(smoothing);
-            let end = (i + smoothing).min(data.len() - 1);
+            let start = i - smoothing;
+            let end = i + smoothing;
 
-            for offset in start..end {
+            for offset in start..=end {
                 total += data[offset].y();
             }
 
-            let point = Point2D::new(data[i].x(), total / (end - start) as f32);
+            let point = Point2D::new(data[i].x(), total / (1 + end - start) as f32);
             smoothed.push(point);
         }
 
@@ -472,8 +385,12 @@ impl Chromatography {
             } else if prev_drv.y() >= 0.0 && next_drv.y() <= 0.0 {
                 // Maximum
                 new_peak = height > self.height_requirement;
-                peak.retention_point = prev.clone();
                 peak.height = height;
+                if prev.y() > next.y() {
+                    peak.retention_point = prev.clone();
+                } else {
+                    peak.retention_point = next.clone();
+                }
             }
 
             let prev_drv2 = &self.second_derivative[index - 3];
@@ -514,14 +431,14 @@ impl Chromatography {
     fn label_peaks(&mut self) -> Vec<Peak> {
         let mut known: Vec<Peak> = vec![];
 
-        let transformer = match self.glucose_transformer {
-            Some(cubic) => cubic,
-            None => Cubic::default(),
-        };
-
         for peak in self.peaks.iter_mut() {
             peak.peak_type = PeakType::Unknown;
-            peak.gu = transformer.evaluate(peak.retention_point.x())
+            peak.gu = match &self.glucose_transformer {
+                Some(transformer) => transformer
+                    .evaluate(peak.retention_point.x())
+                    .unwrap_or(0.0),
+                None => 0.0,
+            };
         }
 
         let tolerance = match self.glucose_transformer {
@@ -535,19 +452,40 @@ impl Chromatography {
                 let prev = left.last_mut().unwrap();
                 let next = &mut right[0];
 
-                let start = transformer.evaluate(prev.retention_point.x());
-                let end = transformer.evaluate(next.retention_point.x());
+                let start;
+                let end;
 
-                let expected = if let Some(gu) = reference.glucose_units {
-                    if self.glucose_transformer.is_some() {
+                let expected = if let Some(transformer) = &self.glucose_transformer {
+                    start = match transformer.evaluate(prev.retention_point.x()) {
+                        Some(value) => value,
+                        None => continue,
+                    };
+                    end = match transformer.evaluate(next.retention_point.x()) {
+                        Some(value) => value,
+                        None => continue,
+                    };
+
+                    if let Some(gu) = reference.glucose_units {
                         gu
+                    } else if let Some(rt) = reference.retention_time {
+                        match transformer.evaluate(rt) {
+                            Some(value) => value,
+                            None => continue,
+                        }
                     } else {
-                        reference.retention_time.unwrap()
+                        println!("Broken reference [{:?}]", reference.name);
+                        continue;
                     }
-                } else if let Some(retention) = reference.retention_time {
-                    transformer.evaluate(retention)
                 } else {
-                    continue;
+                    start = prev.retention_point.x();
+                    end = next.retention_point.x();
+
+                    if let Some(rt) = reference.retention_time {
+                        rt
+                    } else {
+                        println!("Broken reference [{:?}]", reference.name);
+                        continue;
+                    }
                 };
 
                 // A lipid may be expected before the first peak (and is therefore not between 2 peaks)
@@ -637,9 +575,9 @@ impl Chromatography {
             let mut glucose_units = match &peak.peak_type {
                 PeakType::Missing(_) => "0.00".to_string(),
                 _ => {
-                    let value = self
-                        .glucose_transformer
-                        .map_or(0.0, |function| function.evaluate(peak.retention_point.x()));
+                    let value = self.glucose_transformer.as_ref().map_or(0.0, |function| {
+                        function.evaluate(peak.retention_point.x()).unwrap()
+                    });
                     format!("{:.2}", value)
                 }
             };

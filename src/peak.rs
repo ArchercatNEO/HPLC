@@ -49,12 +49,12 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                 backend.draw_circle(pos.next().unwrap(), 3, &BLUE, true)?;
 
                 let retention = pos.next().unwrap();
-                let text = format!("[Unknown, {}]", self.gu);
+                let text = format!("[Unknown, {:.3}, {:.3}]", self.retention_point.x(), self.gu);
 
                 backend.draw_circle(retention, 3, &GREEN, true)?;
                 backend.draw_text(
                     &text,
-                    &("sans-serif", 10).into_text_style(&parent_dim),
+                    &("sans-serif", 20).into_text_style(&parent_dim),
                     retention,
                 )?;
             }
@@ -67,11 +67,16 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                 backend.draw_circle(retention, 3, &GREEN, true)?;
 
                 let text = reference.name.as_ref().map_or("[Unnamed]", |name| &name);
-                let text = format!("[{}, {}]", text, self.gu);
+                let text = format!(
+                    "[{}, {:.3}, {:.3}]",
+                    text,
+                    self.retention_point.x(),
+                    self.gu
+                );
 
                 backend.draw_text(
                     &text,
-                    &("sans-serif", 10).into_text_style(&parent_dim),
+                    &("sans-serif", 20).into_text_style(&parent_dim),
                     retention,
                 )?;
             }

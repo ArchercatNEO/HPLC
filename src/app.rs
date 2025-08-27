@@ -12,10 +12,10 @@ use rfd::FileHandle;
 use crate::{
     chromatogram::ChromatogramState,
     chromatography::{Chromatography, SampleType},
-    cubic::Cubic,
     expandable_slider::{ExpandableSlider, Message as SliderMessage},
     peak::{Peak, PeakType},
     reference::Reference,
+    spline::Spline,
     vector::*,
 };
 
@@ -26,7 +26,7 @@ pub struct App {
     sample_handle: Option<usize>,
     blank_handle: Option<usize>,
     dex_handle: Option<usize>,
-    glucose_transformer: Option<Cubic>,
+    glucose_transformer: Option<Spline>,
     standard_handle: Option<usize>,
     injected_volume: f32,
     injected_volume_str: String,
@@ -531,7 +531,7 @@ impl App {
                         SampleType::Dex => {
                             self.dex_handle = Some(handle);
                             self.glucose_transformer =
-                                Some(self.samples[handle].get_glucose_transformer());
+                                self.samples[handle].get_glucose_transformer();
                             for sample in self.samples.iter_mut() {
                                 sample.set_glucose_transformer(&self.glucose_transformer);
                             }
@@ -609,7 +609,7 @@ impl App {
             }
         }
 
-        if let Some(function) = self.glucose_transformer {
+        if let Some(function) = &self.glucose_transformer {
             content.push_str("\n\n");
             content.push_str("Glucose Units\n");
             content.push_str("Lipid,Expected GU");
@@ -618,7 +618,8 @@ impl App {
             let zero_or_gu = |peak: &Peak| match &peak.peak_type {
                 PeakType::Missing(_) => ",".to_string(),
                 _ => {
-                    format!(",{}", function.evaluate(peak.retention_point.x()))
+                    // TODO
+                    format!(",{:?}", function.evaluate(peak.retention_point.x()))
                 }
             };
 
@@ -687,7 +688,68 @@ impl App {
 
         content.push_str("\n\nDiscovered Peaks");
 
-        if let Some(function) = self.glucose_transformer {
+        content.push_str("\n\nRetention Times");
+        content.push_str("\nPeak");
+        content.push_str(&titles);
+
+        let mut peak_sets: Vec<_> = self
+            .samples
+            .iter()
+            .map(|sample| sample.peaks.iter())
+            .collect();
+
+        let mut index = 0;
+        let mut exhausted = false;
+        while !exhausted {
+            exhausted = true;
+            content.push_str(&format!("\n{}", index));
+
+            for peaks in &mut peak_sets {
+                if let Some(peak) = peaks.next() {
+                    exhausted = false;
+                    content.push_str(&format!(",{}", peak.retention_point.x()));
+                } else {
+                    content.push_str(",");
+                }
+            }
+
+            index += 1;
+        }
+
+        content.push_str("\n\nUnlabelled Retention Times");
+        content.push_str("\nPeak");
+        content.push_str(&titles);
+
+        let mut peak_sets: Vec<_> = self
+            .samples
+            .iter()
+            .map(|sample| {
+                sample
+                    .peaks
+                    .iter()
+                    .filter(|peak| peak.peak_type == PeakType::Unknown)
+            })
+            .collect();
+
+        let mut index = 0;
+        let mut exhausted = false;
+        while !exhausted {
+            exhausted = true;
+            content.push_str(&format!("\n{}", index));
+
+            for peaks in &mut peak_sets {
+                if let Some(peak) = peaks.next() {
+                    exhausted = false;
+                    content.push_str(&format!(",{}", peak.retention_point.x()));
+                } else {
+                    content.push_str(",");
+                }
+            }
+
+            index += 1;
+        }
+
+        if let Some(function) = &self.glucose_transformer {
             content.push_str("\n\nGlucose Units");
             content.push_str("\nPeak");
             content.push_str(&titles);
@@ -708,7 +770,41 @@ impl App {
                     if let Some(peak) = peaks.next() {
                         exhausted = false;
                         let gu = function.evaluate(peak.retention_point.x());
-                        content.push_str(&format!(",{}", gu));
+                        // TODO
+                        content.push_str(&format!(",{:?}", gu));
+                    } else {
+                        content.push_str(",");
+                    }
+                }
+
+                index += 1;
+            }
+
+            content.push_str("\n\nUnlabelled Glucose");
+            content.push_str("\nPeak");
+            content.push_str(&titles);
+
+            let mut peak_sets: Vec<_> = self
+                .samples
+                .iter()
+                .map(|sample| {
+                    sample
+                        .peaks
+                        .iter()
+                        .filter(|peak| peak.peak_type == PeakType::Unknown)
+                })
+                .collect();
+
+            let mut index = 0;
+            let mut exhausted = false;
+            while !exhausted {
+                exhausted = true;
+                content.push_str(&format!("\n{}", index));
+
+                for peaks in &mut peak_sets {
+                    if let Some(peak) = peaks.next() {
+                        exhausted = false;
+                        content.push_str(&format!(",{}", peak.gu));
                     } else {
                         content.push_str(",");
                     }
