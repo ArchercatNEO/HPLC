@@ -8,6 +8,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install fontconfig freetype libvulkan1 libwayland-bin libxkbcommon0
         
       - name: Build
         run: cargo build --verbose --release

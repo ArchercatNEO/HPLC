@@ -16,4 +16,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hplc-rs
-          path: ./target/release/HPLC-RS
+          path: ./target/release/HPLC-RS.exe
