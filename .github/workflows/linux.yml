@@ -12,7 +12,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install fontconfig freetype libvulkan1 libwayland-bin libxkbcommon0
+          sudo apt-get install libfontconfig-dev libfreetype6 libfreetype-dev libvulkan1 libvulkan-dev libwayland-bin libwayland-dev libxkbcommon0 libxkbcommon-dev
         
       - name: Build
         run: cargo build --verbose --release
