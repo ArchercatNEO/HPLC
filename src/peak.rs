@@ -17,11 +17,32 @@ pub enum PeakType {
 pub struct Peak {
     pub start: Point2D,
     pub retention_point: Point2D,
-    pub gu: f64,
+    pub gu: Option<f64>,
     pub end: Point2D,
     pub height: f64,
     pub area: f64,
     pub peak_type: PeakType,
+}
+
+impl Peak {
+    fn format_label(&self) -> String {
+        let name = match &self.peak_type {
+            PeakType::Unknown => "[Unknown]",
+            PeakType::Common(reference) => reference
+                .name
+                .as_ref()
+                .map_or("[Unnamed]", |string| &string),
+            PeakType::Missing(reference) => reference
+                .name
+                .as_ref()
+                .map_or("[Unnamed]", |string| &string),
+        };
+
+        match &self.gu {
+            Some(gu) => format!("[{}, {:.3}, {:.3}]", name, self.retention_point.x(), gu),
+            None => format!("[{}, {:.3}]", name, self.retention_point.x()),
+        }
+    }
 }
 
 impl<'a> PointCollection<'a, Point2D> for &'a Peak {
@@ -49,16 +70,16 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                 backend.draw_circle(pos.next().unwrap(), 3, &BLUE, true)?;
 
                 let retention = pos.next().unwrap();
-                let text = format!("[Unknown, {:.3}, {:.3}]", self.retention_point.x(), self.gu);
-
                 backend.draw_circle(retention, 3, &GREEN, true)?;
+
+                let text = self.format_label();
                 backend.draw_text(
                     &text,
                     &("sans-serif", 10).into_text_style(&parent_dim),
                     retention,
                 )?;
             }
-            PeakType::Common(reference) => {
+            PeakType::Common(_) => {
                 // Peak which is both in data and reference
 
                 backend.draw_circle(pos.next().unwrap(), 3, &BLUE, true)?;
@@ -66,14 +87,7 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                 let retention = pos.next().unwrap();
                 backend.draw_circle(retention, 3, &GREEN, true)?;
 
-                let text = reference.name.as_ref().map_or("[Unnamed]", |name| &name);
-                let text = format!(
-                    "[{}, {:.3}, {:.3}]",
-                    text,
-                    self.retention_point.x(),
-                    self.gu
-                );
-
+                let text = self.format_label();
                 backend.draw_text(
                     &text,
                     &("sans-serif", 10).into_text_style(&parent_dim),

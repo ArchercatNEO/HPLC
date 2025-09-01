@@ -113,7 +113,7 @@ impl Chromatography {
             .collect();
 
         // TODO: parametrice smoothing factor
-        empty.cleaned_data = Self::mean_filter(&empty.raw_data, 0);
+        empty.cleaned_data = Self::mean_filter(&empty.raw_data, 5);
         empty.first_derivative = Self::calculate_derivative(&empty.cleaned_data);
         empty.second_derivative = Self::calculate_derivative(&empty.first_derivative);
         empty.baseline = empty.calculate_baseline();
@@ -218,10 +218,6 @@ impl Chromatography {
         }
 
         intersections.reverse();
-        for inter in &intersections {
-            println!("{}", inter.x());
-        }
-
         let points: Vec<Point2D> = intersections
             .iter()
             .enumerate()
@@ -233,6 +229,7 @@ impl Chromatography {
 
     pub fn set_glucose_transformer(&mut self, transformer: &Option<Spline>) -> &mut Self {
         self.glucose_transformer = transformer.clone();
+        self.peaks = self.calculate_peaks(self.data_range.as_ref());
         self.lipids = self.label_peaks();
 
         self
@@ -455,20 +452,18 @@ impl Chromatography {
             }
         }
 
+        if let Some(spline) = &self.glucose_transformer {
+            for peak in result.iter_mut() {
+                peak.gu = spline.evaluate(peak.retention_point.x());
+            }
+        }
+
         result
     }
 
     fn label_peaks(&mut self) -> Vec<Peak> {
-        let mut known: Vec<Peak> = vec![];
-
         for peak in self.peaks.iter_mut() {
             peak.peak_type = PeakType::Unknown;
-            peak.gu = match &self.glucose_transformer {
-                Some(transformer) => transformer
-                    .evaluate(peak.retention_point.x())
-                    .unwrap_or(0.0),
-                None => 0.0,
-            };
         }
 
         let tolerance = match self.glucose_transformer {
@@ -476,78 +471,134 @@ impl Chromatography {
             None => self.retention_time_tolerance,
         };
 
+        let mut matrix: Vec<Vec<Option<f64>>> = Vec::with_capacity(self.lipid_references.len());
         for reference in self.lipid_references.iter() {
-            for i in 1..self.peaks.len() {
-                let (left, right) = self.peaks.split_at_mut(i);
-                let prev = left.last_mut().unwrap();
-                let next = &mut right[0];
-
-                let start;
-                let end;
-
-                let expected = if let Some(transformer) = &self.glucose_transformer {
-                    start = match transformer.evaluate(prev.retention_point.x()) {
-                        Some(value) => value,
-                        None => continue,
-                    };
-                    end = match transformer.evaluate(next.retention_point.x()) {
-                        Some(value) => value,
-                        None => continue,
-                    };
-
-                    if let Some(gu) = reference.glucose_units {
-                        gu
-                    } else if let Some(rt) = reference.retention_time {
-                        match transformer.evaluate(rt) {
-                            Some(value) => value,
-                            None => continue,
-                        }
-                    } else {
-                        println!("Broken reference [{:?}]", reference.name);
+            let time = match &self.glucose_transformer {
+                None => match &reference.retention_time {
+                    Some(rt) => *rt,
+                    None => {
+                        println!("Broken lipid reference {:?}", reference.name);
+                        matrix.push(vec![None; self.peaks.len()]);
                         continue;
                     }
-                } else {
-                    start = prev.retention_point.x();
-                    end = next.retention_point.x();
+                },
+                Some(spline) => match &reference.glucose_units {
+                    Some(gu) => *gu,
+                    None => match &reference.retention_time {
+                        Some(rt) => {
+                            let maybe_gu = spline.evaluate(*rt);
+                            match maybe_gu {
+                                Some(gu) => gu,
+                                None => {
+                                    println!("Lipid {:?} out of range", reference.name);
+                                    matrix.push(vec![None; self.peaks.len()]);
+                                    continue;
+                                }
+                            }
+                        }
+                        None => {
+                            println!("Broken lipid reference {:?}", reference.name);
+                            matrix.push(vec![None; self.peaks.len()]);
+                            continue;
+                        }
+                    },
+                },
+            };
 
-                    if let Some(rt) = reference.retention_time {
-                        rt
-                    } else {
-                        println!("Broken reference [{:?}]", reference.name);
-                        continue;
+            let mut distances: Vec<Option<f64>> = Vec::with_capacity(self.peaks.len());
+            for peak in self.peaks.iter() {
+                let distance = match &self.glucose_transformer {
+                    None => Some(f64::abs(peak.retention_point.x() - time)),
+                    Some(spline) => {
+                        let maybe_gu = spline.evaluate(peak.retention_point.x());
+                        maybe_gu.map(|gu| f64::abs(gu - time))
                     }
                 };
 
-                // A lipid may be expected before the first peak (and is therefore not between 2 peaks)
-                if f64::abs(expected - start) < tolerance {
-                    prev.peak_type = PeakType::Common(reference.clone());
-                    known.push(prev.clone());
-                    break;
-                }
+                distances.push(distance);
+            }
+            matrix.push(distances);
+        }
 
-                // If a lipid is expected between 2 peaks choose the closer one
-                if (start..end).contains(&expected) {
-                    let dist1 = expected - start;
-                    let dist2 = end - expected;
-
-                    if dist1 < dist2 && dist1 < tolerance {
-                        prev.peak_type = PeakType::Common(reference.clone());
-                        known.push(prev.clone());
-                    } else if dist2 < tolerance {
-                        next.peak_type = PeakType::Common(reference.clone());
-                        known.push(next.clone());
-                    } else {
-                        let mut fake = Peak::default();
-                        fake.peak_type = PeakType::Missing(reference.clone());
-                        known.push(fake);
+        let mut known = vec![];
+        let mut found = 0;
+        while found < self.lipid_references.len() {
+            let mut closest_lipid = 0;
+            let mut closest_peak = 0;
+            let mut closest_distance = None;
+            for reference in 0..self.lipid_references.len() {
+                for peak in 0..self.peaks.len() {
+                    let potential_distance = matrix[reference][peak];
+                    match (closest_distance, potential_distance) {
+                        (None, None) => {}
+                        (None, Some(_)) => {
+                            closest_distance = potential_distance;
+                            closest_lipid = reference;
+                            closest_peak = peak;
+                        }
+                        (Some(_), None) => {}
+                        (Some(current), Some(potential)) => {
+                            if potential < current {
+                                closest_distance = potential_distance;
+                                closest_lipid = reference;
+                                closest_peak = peak;
+                            }
+                        }
                     }
+                }
+            }
 
-                    break;
+            if closest_distance.is_none() || closest_distance.unwrap() > tolerance {
+                break;
+            }
+
+            let peak = &mut self.peaks[closest_peak];
+            peak.peak_type = PeakType::Common(self.lipid_references[closest_lipid].clone());
+            known.push(peak.clone());
+
+            matrix[closest_lipid] = vec![None; self.peaks.len()];
+            for lipid in 0..matrix.len() {
+                matrix[lipid][closest_peak] = None;
+            }
+
+            found += 1;
+        }
+
+        let mut combined = Vec::with_capacity(self.lipid_references.len());
+        for reference in self.lipid_references.iter() {
+            let maybe_pair = known.iter().find(|peak| match &peak.peak_type {
+                PeakType::Common(potential) => reference == potential,
+                _ => false,
+            });
+
+            match maybe_pair {
+                Some(pair) => {
+                    combined.push(pair.clone());
+                }
+                None => {
+                    let mut missing = Peak::default();
+                    missing.peak_type = PeakType::Missing(reference.clone());
+                    combined.push(missing);
                 }
             }
         }
 
-        known
+        combined.sort_by(|left, right| {
+            let left_rt = match &left.peak_type {
+                PeakType::Common(reference) => reference.retention_time,
+                PeakType::Missing(reference) => reference.retention_time,
+                _ => panic!(""),
+            };
+
+            let right_rt = match &right.peak_type {
+                PeakType::Common(reference) => reference.retention_time,
+                PeakType::Missing(reference) => reference.retention_time,
+                _ => panic!(""),
+            };
+
+            left_rt.unwrap().total_cmp(&right_rt.unwrap())
+        });
+        combined
     }
 
     pub fn set_global_zoom(&mut self, zoom: &Point<f64>) -> &mut Self {

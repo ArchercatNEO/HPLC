@@ -67,7 +67,7 @@ impl Default for App {
             chart_end: ExpandableSlider::new(36.5, 0.0, 60.0, 0.5, "Chart End"),
             height_requirement: ExpandableSlider::new(0.3, 0.0, 1.0, 0.01, "Height Requirement"),
             inflection_requirement: ExpandableSlider::new(
-                0.0,
+                10.0,
                 0.0,
                 10.0,
                 1.0,
@@ -609,7 +609,7 @@ impl App {
             }
         }
 
-        if let Some(function) = &self.glucose_transformer {
+        if self.glucose_transformer.is_some() {
             content.push_str("\n\n");
             content.push_str("Glucose Units\n");
             content.push_str("Lipid,Expected GU");
@@ -617,10 +617,7 @@ impl App {
 
             let zero_or_gu = |peak: &Peak| match &peak.peak_type {
                 PeakType::Missing(_) => ",".to_string(),
-                _ => {
-                    // TODO
-                    format!(",{:?}", function.evaluate(peak.retention_point.x()))
-                }
+                _ => format!(",{:.3}", peak.gu.unwrap()),
             };
 
             for (i, reference) in self.lipid_reference.iter().enumerate() {
@@ -769,9 +766,11 @@ impl App {
                 for peaks in &mut peak_sets {
                     if let Some(peak) = peaks.next() {
                         exhausted = false;
-                        let gu = function.evaluate(peak.retention_point.x());
-                        // TODO
-                        content.push_str(&format!(",{:?}", gu));
+                        let gu = match peak.gu {
+                            Some(gu) => format!(",{:.3}", gu),
+                            None => format!(",OOR"),
+                        };
+                        content.push_str(&gu);
                     } else {
                         content.push_str(",");
                     }
@@ -804,7 +803,7 @@ impl App {
                 for peaks in &mut peak_sets {
                     if let Some(peak) = peaks.next() {
                         exhausted = false;
-                        content.push_str(&format!(",{}", peak.gu));
+                        content.push_str(&format!(",{:?}", peak.gu));
                     } else {
                         content.push_str(",");
                     }
