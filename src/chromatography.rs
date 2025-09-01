@@ -33,16 +33,16 @@ pub struct Chromatography {
     pub baseline: Vec<Point2D>,
     pub peaks: Vec<Peak>,
     pub lipids: Vec<Peak>,
-    pub total_area: f32,
+    pub total_area: f64,
 
     // Chromatography configuration
     sample_type: SampleType,
-    data_range: Option<Range<f32>>,
+    data_range: Option<Range<f64>>,
     include_unknowns: bool,
-    height_requirement: f32,
-    inflection_requirement: f32,
-    retention_time_tolerance: f32,
-    glucose_unit_tolerance: f32,
+    height_requirement: f64,
+    inflection_requirement: f64,
+    retention_time_tolerance: f64,
+    glucose_unit_tolerance: f64,
 
     // External references
     lipid_references: Rc<[Reference]>,
@@ -52,7 +52,7 @@ pub struct Chromatography {
     //TODO: how can we not put data that is only for rendering here?
     pub title: String,
     pub file_name: OsString,
-    pub global_zoom: Point,
+    pub global_zoom: Point<f64>,
 }
 
 impl Chromatography {
@@ -92,16 +92,16 @@ impl Chromatography {
                     line.split(",")
                 };
 
-                let x: f32 = match data.next() {
-                    Some(string) => match string.parse::<f32>() {
+                let x: f64 = match data.next() {
+                    Some(string) => match string.parse::<f64>() {
                         Ok(value) => value,
                         Err(_) => return None,
                     },
                     None => return None,
                 };
 
-                let y: f32 = match data.next() {
-                    Some(string) => match string.parse::<f32>() {
+                let y: f64 = match data.next() {
+                    Some(string) => match string.parse::<f64>() {
                         Ok(value) => value,
                         Err(_) => return None,
                     },
@@ -113,11 +113,12 @@ impl Chromatography {
             .collect();
 
         // TODO: parametrice smoothing factor
-        empty.cleaned_data = Self::mean_filter(&empty.raw_data, 5);
+        empty.cleaned_data = Self::mean_filter(&empty.raw_data, 0);
         empty.first_derivative = Self::calculate_derivative(&empty.cleaned_data);
         empty.second_derivative = Self::calculate_derivative(&empty.first_derivative);
         empty.baseline = empty.calculate_baseline();
-        empty.peaks = empty.calculate_peaks();
+        empty.total_area = empty.calculate_area(None);
+        empty.peaks = empty.calculate_peaks(None);
         empty.lipids = empty.label_peaks();
 
         Some(empty)
@@ -127,7 +128,7 @@ impl Chromatography {
         self.cleaned_data.clone()
     }
 
-    pub fn get_data_range(&self) -> Range<f32> {
+    pub fn get_data_range(&self) -> Range<f64> {
         if let Some(range) = &self.data_range {
             range.clone()
         } else {
@@ -137,26 +138,16 @@ impl Chromatography {
         }
     }
 
-    pub fn set_data_range(&mut self, value: &Range<f32>) -> &mut Self {
-        let filter: Vec<Point2D> = self
-            .raw_data
-            .iter()
-            .cloned()
-            .filter(|point| value.contains(&point.x()))
-            .collect();
-
+    pub fn set_data_range(&mut self, value: &Range<f64>) -> &mut Self {
         self.data_range = Some(value.clone());
-        self.cleaned_data = Self::mean_filter(&filter, 5);
-        self.first_derivative = Self::calculate_derivative(&self.cleaned_data);
-        self.second_derivative = Self::calculate_derivative(&self.first_derivative);
-        self.baseline = self.calculate_baseline();
-        self.peaks = self.calculate_peaks();
+        self.total_area = self.calculate_area(self.data_range.as_ref());
+        self.peaks = self.calculate_peaks(self.data_range.as_ref());
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn get_highest_point(&self) -> f32 {
+    pub fn get_highest_point(&self) -> f64 {
         let mut highest = 0.0;
         for point in &self.cleaned_data {
             if point.y() > highest {
@@ -169,7 +160,6 @@ impl Chromatography {
 
     pub fn set_lipid_references(&mut self, value: Rc<[Reference]>) -> &mut Self {
         self.lipid_references = value;
-        self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
         self
@@ -177,58 +167,65 @@ impl Chromatography {
 
     pub fn set_include_unknowns(&mut self, show: &bool) -> &mut Self {
         self.include_unknowns = *show;
-        self.peaks = self.calculate_peaks();
+        self.peaks = self.calculate_peaks(self.data_range.as_ref());
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn set_height_requirement(&mut self, value: &f32) -> &mut Self {
+    pub fn set_height_requirement(&mut self, value: &f64) -> &mut Self {
         self.height_requirement = *value;
-        self.peaks = self.calculate_peaks();
+        self.peaks = self.calculate_peaks(self.data_range.as_ref());
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn set_inflection_requirement(&mut self, value: &f32) -> &mut Self {
+    pub fn set_inflection_requirement(&mut self, value: &f64) -> &mut Self {
         self.inflection_requirement = *value;
-        self.peaks = self.calculate_peaks();
+        self.peaks = self.calculate_peaks(self.data_range.as_ref());
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn set_retention_time_tolerance(&mut self, value: &f32) -> &mut Self {
+    pub fn set_retention_time_tolerance(&mut self, value: &f64) -> &mut Self {
         self.retention_time_tolerance = *value;
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn set_glucose_unit_tolerance(&mut self, value: &f32) -> &mut Self {
+    pub fn set_glucose_unit_tolerance(&mut self, value: &f64) -> &mut Self {
         self.glucose_unit_tolerance = *value;
         self.lipids = self.label_peaks();
 
         self
     }
 
-    pub fn get_glucose_transformer(&mut self) -> Option<Spline> {
-        let mut intersections: Vec<Point2D> = vec![];
+    pub fn get_glucose_transformer(&self) -> Option<Spline> {
+        let range = Some(0.0..38.7);
+        let mut peaks = self.calculate_peaks(range.as_ref());
+        peaks.reverse();
 
-        for peak in &self.peaks {
-            let retention = peak.retention_point.clone();
-            intersections = intersections
-                .into_iter()
-                .filter(|prev| prev.y() > retention.y())
-                .collect();
-            intersections.push(retention);
+        let mut height = 0.0;
+        let mut intersections: Vec<Point2D> = vec![];
+        for peak in &peaks {
+            if peak.height > height {
+                height = peak.height;
+                intersections.push(peak.retention_point.clone());
+            }
+        }
+
+        intersections.reverse();
+        for inter in &intersections {
+            println!("{}", inter.x());
         }
 
         let points: Vec<Point2D> = intersections
             .iter()
             .enumerate()
-            .map(|(i, point)| Point2D::new(point.x(), (i + 2) as f32))
+            .map(|(i, point)| Point2D::new(point.x(), (i + 1) as f64))
             .collect();
 
         Spline::new(&points)
@@ -263,7 +260,7 @@ impl Chromatography {
                 total += data[offset].y();
             }
 
-            let point = Point2D::new(data[i].x(), total / (1 + end - start) as f32);
+            let point = Point2D::new(data[i].x(), total / (1 + end - start) as f64);
             smoothed.push(point);
         }
 
@@ -277,9 +274,9 @@ impl Chromatography {
 
         let mut derivative = Vec::with_capacity(graph.len());
 
-        for i in 1..(graph.len() - 1) {
+        for i in 1..graph.len() {
             let prev = &graph[i - 1];
-            let next = &graph[i + 1];
+            let next = &graph[i];
 
             let point = Point2D::new(prev.x(), prev.gradient(next));
             derivative.push(point);
@@ -300,7 +297,7 @@ impl Chromatography {
         let mut baseline = vec![];
 
         while next_index + 1 < data.len() {
-            let mut best_gradient = f32::INFINITY;
+            let mut best_gradient = f64::INFINITY;
             for i in orgin_index..data.len() {
                 let point = &data[i];
 
@@ -327,22 +324,56 @@ impl Chromatography {
         baseline
     }
 
-    fn calculate_peaks(&mut self) -> Vec<Peak> {
-        let data = &self.cleaned_data;
+    fn calculate_area(&self, maybe_range: Option<&Range<f64>>) -> f64 {
+        let mut area = 0.0;
+        for i in 1..self.cleaned_data.len() {
+            let prev = self.cleaned_data[i - 1];
+            let next = self.cleaned_data[i];
 
-        self.total_area = 0.0;
+            if let Some(range) = maybe_range {
+                if prev.x() < range.start {
+                    continue;
+                }
+
+                if next.x() > range.end {
+                    break;
+                }
+            }
+
+            let width = next.x() - prev.x();
+            let a = prev.y() - self.baseline[i - 1].y();
+            let b = next.y() - self.baseline[i].y();
+            area += 0.5 * width * (a + b);
+        }
+
+        return area;
+    }
+
+    fn calculate_peaks(&self, maybe_range: Option<&Range<f64>>) -> Vec<Peak> {
+        let mut pivot = 4;
+        if let Some(range) = maybe_range {
+            while self.cleaned_data[pivot].x() < range.start {
+                pivot += 1;
+            }
+        }
 
         let mut result = vec![];
 
         let mut peak = Peak::default();
-        peak.start = data[0].clone();
+        peak.start = self.cleaned_data[pivot].clone();
 
         let mut new_peak = false;
-        let mut prev_min = data[0].y() - self.baseline[0].y();
+        let mut prev_min = self.cleaned_data[pivot].y() - self.baseline[pivot].y();
 
-        for index in 4..(data.len() - 4) {
-            let prev = &data[index - 1];
-            let next = &data[index];
+        for index in pivot..self.cleaned_data.len() {
+            let prev = &self.cleaned_data[index - 1];
+            let next = &self.cleaned_data[index];
+
+            if let Some(range) = maybe_range {
+                if next.x() > range.end {
+                    break;
+                }
+            }
 
             let height = prev.y() - self.baseline[index - 1].y();
 
@@ -353,7 +384,6 @@ impl Chromatography {
                 h * (a + b) / 2.0
             };
 
-            self.total_area += area;
             peak.area += area;
 
             let prev_drv = &self.first_derivative[index - 2];
@@ -396,7 +426,7 @@ impl Chromatography {
             let prev_drv2 = &self.second_derivative[index - 3];
             let next_drv2 = &self.second_derivative[index - 2];
 
-            let difference = f32::abs(prev_drv2.y() - next_drv2.y());
+            let difference = f64::abs(prev_drv2.y() - next_drv2.y());
 
             if difference < self.inflection_requirement || height < self.height_requirement {
                 continue;
@@ -489,7 +519,7 @@ impl Chromatography {
                 };
 
                 // A lipid may be expected before the first peak (and is therefore not between 2 peaks)
-                if f32::abs(expected - start) < tolerance {
+                if f64::abs(expected - start) < tolerance {
                     prev.peak_type = PeakType::Common(reference.clone());
                     known.push(prev.clone());
                     break;
@@ -520,13 +550,13 @@ impl Chromatography {
         known
     }
 
-    pub fn set_global_zoom(&mut self, zoom: &Point) -> &mut Self {
+    pub fn set_global_zoom(&mut self, zoom: &Point<f64>) -> &mut Self {
         self.global_zoom = zoom.clone();
 
         self
     }
 
-    pub fn into_table_element<'b>(&'b self, concentration_multiplier: f32) -> Element<'b, ()> {
+    pub fn into_table_element<'b>(&'b self, concentration_multiplier: f64) -> Element<'b, ()> {
         let mut table = column![];
         let title = text(format!("Total Area - {}", self.total_area))
             .width(950)

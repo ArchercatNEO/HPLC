@@ -4,8 +4,8 @@ use std::path;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Reference {
     pub name: Option<String>,
-    pub retention_time: Option<f32>,
-    pub glucose_units: Option<f32>,
+    pub retention_time: Option<f64>,
+    pub glucose_units: Option<f64>,
 }
 
 impl Reference {
@@ -83,13 +83,13 @@ impl Reference {
     }
 
     pub fn parse_retention_time(mut self, retention_time: &str) -> Self {
-        self.retention_time = retention_time.parse::<f32>().map_or(None, Some);
+        self.retention_time = retention_time.parse::<f64>().map_or(None, Some);
 
         self
     }
 
     pub fn parse_glucose_units(mut self, glucose_units: &str) -> Self {
-        self.glucose_units = glucose_units.parse::<f32>().map_or(None, Some);
+        self.glucose_units = glucose_units.parse::<f64>().map_or(None, Some);
 
         self
     }

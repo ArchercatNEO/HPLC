@@ -10,11 +10,11 @@ use crate::chromatography::Chromatography;
 pub struct ChromatogramState {
     mouse_inside: bool,
     mouse_pressed: bool,
-    mouse_position: Point,
+    mouse_position: Point<f64>,
     ctrl_pressed: bool,
     alt_pressed: bool,
-    local_zoom: Point,
-    local_offset: Point,
+    local_zoom: Point<f64>,
+    local_offset: Point<f64>,
 }
 
 impl Default for ChromatogramState {
@@ -117,28 +117,33 @@ impl Chart<()> for Chromatography {
                     }
                 }
                 mouse::Event::CursorMoved { position } => {
+                    let positionf64: Point<f64> = Point {
+                        x: position.x as f64,
+                        y: position.y as f64,
+                    };
+
                     if state.mouse_inside && state.mouse_pressed {
-                        let difference = position - state.mouse_position;
+                        let difference = positionf64 - state.mouse_position;
 
                         if !state.ctrl_pressed {
-                            state.local_offset.x -= difference.x * state.local_zoom.x * 0.05;
+                            state.local_offset.x -= difference.x * 0.05;
                         }
                         if !state.alt_pressed {
-                            state.local_offset.y += difference.y * state.local_zoom.y * 0.5;
+                            state.local_offset.y += difference.y * 0.5;
                         }
                     }
 
                     state.mouse_inside = bounds.contains(position);
-                    state.mouse_position = position;
+                    state.mouse_position = positionf64;
                 }
                 mouse::Event::WheelScrolled { delta } => {
                     if state.mouse_inside {
                         if let mouse::ScrollDelta::Lines { x: _, y } = delta {
                             if !state.ctrl_pressed {
-                                state.local_zoom.x *= 1.0 - y * 0.1;
+                                state.local_zoom.x *= 1.0 - (y as f64) * 0.1;
                             }
                             if !state.alt_pressed {
-                                state.local_zoom.y *= 1.0 - y * 0.1;
+                                state.local_zoom.y *= 1.0 - (y as f64) * 0.1;
                             }
                         }
                     }

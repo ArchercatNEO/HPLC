@@ -7,7 +7,7 @@ use iced::{
 #[derive(Clone, Debug)]
 pub enum Message {
     Invalid,
-    Value(f32),
+    Value(f64),
     ValueStr(String),
     Start(String),
     End(String),
@@ -17,10 +17,10 @@ pub enum Message {
 
 #[derive(Clone, Debug)]
 pub struct ExpandableSlider {
-    value: f32,
-    start: f32,
-    end: f32,
-    step: f32,
+    value: f64,
+    start: f64,
+    end: f64,
+    step: f64,
     label: String,
     value_str: String,
     start_str: String,
@@ -31,7 +31,7 @@ pub struct ExpandableSlider {
 }
 
 impl ExpandableSlider {
-    pub fn new(value: f32, start: f32, end: f32, step: f32, label: &str) -> Self {
+    pub fn new(value: f64, start: f64, end: f64, step: f64, label: &str) -> Self {
         let formatted = format!("{}: ", label);
 
         Self {
@@ -49,7 +49,7 @@ impl ExpandableSlider {
         }
     }
 
-    pub fn get_value(&self) -> f32 {
+    pub fn get_value(&self) -> f64 {
         if self.exponential {
             self.step.powf(self.value)
         } else {
@@ -134,7 +134,7 @@ impl ExpandableSlider {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Option<f32> {
+    pub fn update(&mut self, message: Message) -> Option<f64> {
         match message {
             Message::Invalid => None,
             Message::Value(value) => {
@@ -156,7 +156,7 @@ impl ExpandableSlider {
             Message::ValueStr(content) => {
                 self.value_str = content;
 
-                match self.value_str.parse::<f32>() {
+                match self.value_str.parse::<f64>() {
                     Ok(float) => {
                         self.value = float;
                         Some(float)
@@ -165,7 +165,7 @@ impl ExpandableSlider {
                 }
             }
             Message::Start(content) => {
-                if let Ok(float) = content.parse::<f32>() {
+                if let Ok(float) = content.parse::<f64>() {
                     self.start = float;
                 }
 
@@ -173,7 +173,7 @@ impl ExpandableSlider {
                 None
             }
             Message::End(content) => {
-                if let Ok(float) = content.parse::<f32>() {
+                if let Ok(float) = content.parse::<f64>() {
                     self.end = float;
                 }
 
@@ -181,7 +181,7 @@ impl ExpandableSlider {
                 None
             }
             Message::Step(content) => {
-                if let Ok(float) = content.parse::<f32>() {
+                if let Ok(float) = content.parse::<f64>() {
                     self.step = float;
                 }
 

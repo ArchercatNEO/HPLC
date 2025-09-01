@@ -4,18 +4,19 @@ use crate::vector::{Point2D, Vector2};
 
 #[derive(Clone, Debug)]
 pub struct Spline {
-    cubics: Vec<(RangeInclusive<f32>, Cubic)>,
+    cubics: Vec<(RangeInclusive<f64>, Cubic)>,
 }
 
 impl Spline {
     pub fn new(points: &[Point2D]) -> Option<Self> {
         let order = (points.len() - 1) * 4;
-        let mut matrix: Vec<Vec<f32>> = Vec::with_capacity(order);
+        let mut matrix: Vec<Vec<f64>> = Vec::with_capacity(order);
         let mut result = Vec::with_capacity(order);
 
         for (i, point) in points.iter().enumerate() {
             // First and last points are special
             if i == 0 {
+                // Second derivative == 0
                 let mut startpoint = vec![0.0; order];
                 startpoint[0] = 6.0 * point.x();
                 startpoint[1] = 2.0;
@@ -36,6 +37,7 @@ impl Spline {
             }
 
             if i == points.len() - 1 {
+                // Second derivative == 0
                 let mut endpoint = vec![0.0; order];
                 endpoint[i * 4 - 4] = 6.0 * point.x();
                 endpoint[i * 4 - 3] = 2.0;
@@ -118,28 +120,13 @@ impl Spline {
                 cubics.push((start..=end, cubic));
             }
 
-            if false {
-                for (i, point) in points.iter().enumerate() {
-                    let cubic = cubics[i].1;
-                    println!(
-                        "{},{},{},{},{},{}",
-                        point.x(),
-                        point.y(),
-                        cubic.d,
-                        cubic.c,
-                        cubic.b,
-                        cubic.a
-                    );
-                }
-            }
-
             return Some(Spline { cubics });
         }
 
         None
     }
 
-    pub fn evaluate(&self, value: f32) -> Option<f32> {
+    pub fn evaluate(&self, value: f64) -> Option<f64> {
         for (range, cubic) in &self.cubics {
             if range.contains(&value) {
                 return Some(cubic.evaluate(value));
@@ -149,7 +136,7 @@ impl Spline {
         return None;
     }
 
-    fn solve_matrix(matrix: &mut [Vec<f32>], values: &mut [f32]) -> Option<Vec<f32>> {
+    fn solve_matrix(matrix: &mut [Vec<f64>], values: &mut [f64]) -> Option<Vec<f64>> {
         let order = matrix.len();
 
         for i in 0..order {
@@ -196,18 +183,18 @@ impl Spline {
 
 #[derive(Clone, Copy, PartialEq)]
 struct Cubic {
-    pub a: f32,
-    pub b: f32,
-    pub c: f32,
-    pub d: f32,
+    pub a: f64,
+    pub b: f64,
+    pub c: f64,
+    pub d: f64,
 }
 
 impl Cubic {
-    pub fn new(a: f32, b: f32, c: f32, d: f32) -> Self {
+    pub fn new(a: f64, b: f64, c: f64, d: f64) -> Self {
         Self { a, b, c, d }
     }
 
-    pub fn evaluate(&self, x: f32) -> f32 {
+    pub fn evaluate(&self, x: f64) -> f64 {
         self.a * x * x * x + self.b * x * x + self.c * x + self.d
     }
 }

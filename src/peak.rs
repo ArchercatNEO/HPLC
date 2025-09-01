@@ -17,10 +17,10 @@ pub enum PeakType {
 pub struct Peak {
     pub start: Point2D,
     pub retention_point: Point2D,
-    pub gu: f32,
+    pub gu: f64,
     pub end: Point2D,
-    pub height: f32,
-    pub area: f32,
+    pub height: f64,
+    pub area: f64,
     pub peak_type: PeakType,
 }
 
@@ -54,7 +54,7 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
                 backend.draw_circle(retention, 3, &GREEN, true)?;
                 backend.draw_text(
                     &text,
-                    &("sans-serif", 20).into_text_style(&parent_dim),
+                    &("sans-serif", 10).into_text_style(&parent_dim),
                     retention,
                 )?;
             }
@@ -76,7 +76,7 @@ impl<DB: DrawingBackend> Drawable<DB> for Peak {
 
                 backend.draw_text(
                     &text,
-                    &("sans-serif", 20).into_text_style(&parent_dim),
+                    &("sans-serif", 10).into_text_style(&parent_dim),
                     retention,
                 )?;
             }

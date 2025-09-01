@@ -28,9 +28,9 @@ pub struct App {
     dex_handle: Option<usize>,
     glucose_transformer: Option<Spline>,
     standard_handle: Option<usize>,
-    injected_volume: f32,
+    injected_volume: f64,
     injected_volume_str: String,
-    sample_dilution: f32,
+    sample_dilution: f64,
     sample_dilution_str: String,
     chart_start: ExpandableSlider,
     chart_end: ExpandableSlider,
@@ -414,7 +414,7 @@ impl App {
             }
             Message::ChartStart(message) => {
                 if let Some(unbound) = self.chart_start.update(message) {
-                    let start = f32::min(unbound, self.chart_end.get_value());
+                    let start = f64::min(unbound, self.chart_end.get_value());
                     self.chart_start.update(SliderMessage::Value(start));
 
                     let range = start..self.chart_end.get_value();
@@ -427,7 +427,7 @@ impl App {
             }
             Message::ChartEnd(message) => {
                 if let Some(unbound) = self.chart_end.update(message) {
-                    let end = f32::max(self.chart_end.get_value(), unbound);
+                    let end = f64::max(self.chart_end.get_value(), unbound);
                     self.chart_end.update(SliderMessage::Value(end));
 
                     let range = self.chart_start.get_value()..end;
@@ -551,7 +551,7 @@ impl App {
                     }
                 }
 
-                if let Ok(value) = input.parse::<f32>() {
+                if let Ok(value) = input.parse::<f64>() {
                     self.injected_volume = value;
                 }
                 self.injected_volume_str = input;
@@ -565,7 +565,7 @@ impl App {
                     }
                 }
 
-                if let Ok(value) = input.parse::<f32>() {
+                if let Ok(value) = input.parse::<f64>() {
                     self.sample_dilution = value;
                 }
                 self.sample_dilution_str = input;
