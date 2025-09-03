@@ -339,6 +339,7 @@ impl App {
                     sample.set_lipid_references(Rc::clone(&self.lipid_reference));
                     sample.set_include_unknowns(&self.include_unknowns);
                     sample.set_height_requirement(&self.height_requirement.get_value());
+                    sample.set_inflection_requirement(&self.inflection_requirement.get_value());
                     sample.set_retention_time_tolerance(&self.retention_time_tolerance.get_value());
                     sample.set_glucose_unit_tolerance(&self.glucose_unit_tolerance.get_value());
                     sample.set_glucose_transformer(&self.glucose_transformer);
@@ -746,7 +747,7 @@ impl App {
             index += 1;
         }
 
-        if let Some(function) = &self.glucose_transformer {
+        if self.glucose_transformer.is_some() {
             content.push_str("\n\nGlucose Units");
             content.push_str("\nPeak");
             content.push_str(&titles);

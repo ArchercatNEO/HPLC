@@ -147,7 +147,7 @@ impl ExpandableSlider {
                         self.value
                     };
 
-                    self.value_str = transformed.to_string();
+                    self.value_str = format!("{:.3}", transformed);
                     Some(transformed)
                 } else {
                     None

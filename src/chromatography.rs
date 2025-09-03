@@ -116,7 +116,7 @@ impl Chromatography {
         empty.cleaned_data = Self::mean_filter(&empty.raw_data, 5);
         empty.first_derivative = Self::calculate_derivative(&empty.cleaned_data);
         empty.second_derivative = Self::calculate_derivative(&empty.first_derivative);
-        empty.baseline = empty.calculate_baseline();
+        empty.baseline = empty.calculate_baseline(None);
         empty.total_area = empty.calculate_area(None);
         empty.peaks = empty.calculate_peaks(None);
         empty.lipids = empty.label_peaks();
@@ -125,7 +125,21 @@ impl Chromatography {
     }
 
     pub fn get_data(&self) -> Vec<Point2D> {
-        self.cleaned_data.clone()
+        match (self.sample_type, &self.data_range) {
+            (SampleType::Dex, _) => self
+                .cleaned_data
+                .iter()
+                .filter(|point| (0.0..38.7).contains(&point.x()))
+                .cloned()
+                .collect(),
+            (_, Some(range)) => self
+                .cleaned_data
+                .iter()
+                .filter(|point| range.contains(&point.x()))
+                .cloned()
+                .collect(),
+            (_, None) => self.cleaned_data.clone(),
+        }
     }
 
     pub fn get_data_range(&self) -> Range<f64> {
@@ -140,9 +154,12 @@ impl Chromatography {
 
     pub fn set_data_range(&mut self, value: &Range<f64>) -> &mut Self {
         self.data_range = Some(value.clone());
-        self.total_area = self.calculate_area(self.data_range.as_ref());
-        self.peaks = self.calculate_peaks(self.data_range.as_ref());
-        self.lipids = self.label_peaks();
+        if self.sample_type != SampleType::Dex {
+            self.baseline = self.calculate_baseline(self.data_range.as_ref());
+            self.total_area = self.calculate_area(self.data_range.as_ref());
+            self.peaks = self.calculate_peaks(self.data_range.as_ref());
+            self.lipids = self.label_peaks();
+        }
 
         self
     }
@@ -204,8 +221,7 @@ impl Chromatography {
     }
 
     pub fn get_glucose_transformer(&self) -> Option<Spline> {
-        let range = Some(0.0..38.7);
-        let mut peaks = self.calculate_peaks(range.as_ref());
+        let mut peaks = self.peaks.clone();
         peaks.reverse();
 
         let mut height = 0.0;
@@ -241,6 +257,14 @@ impl Chromatography {
 
     pub fn set_sample_type(&mut self, value: &SampleType) -> &mut Self {
         self.sample_type = value.clone();
+
+        if *value == SampleType::Dex {
+            let dex_range = Some(0.0..38.7);
+            self.baseline = self.calculate_baseline(dex_range.as_ref());
+            self.total_area = self.calculate_area(dex_range.as_ref());
+            self.peaks = self.calculate_peaks(dex_range.as_ref());
+            self.lipids = self.label_peaks();
+        }
 
         self
     }
@@ -282,19 +306,20 @@ impl Chromatography {
         derivative
     }
 
-    fn calculate_baseline(&self) -> Vec<Point2D> {
+    fn calculate_baseline(&self, maybe_range: Option<&Range<f64>>) -> Vec<Point2D> {
         let data = &self.cleaned_data;
 
         let mut origin = &data[0];
         let mut orgin_index = 0;
 
-        let mut next = &Point2D::default();
+        let mut next = &data[1];
         let mut next_index = 1;
 
         let mut baseline = vec![];
 
         while next_index + 1 < data.len() {
             let mut best_gradient = f64::INFINITY;
+
             for i in orgin_index..data.len() {
                 let point = &data[i];
 
@@ -304,6 +329,12 @@ impl Chromatography {
                     next_index = i;
                     best_gradient = gradient;
                 }
+
+                if let Some(range) = maybe_range {
+                    if point.x() > range.end {
+                        break;
+                    }
+                }
             }
 
             for index in orgin_index..next_index {
@@ -311,6 +342,16 @@ impl Chromatography {
                 let x = time - data[orgin_index].x();
                 let height = best_gradient * x + origin.y();
                 baseline.push(Point2D::new(time, height));
+            }
+
+            if let Some(range) = maybe_range {
+                if next.x() > range.end {
+                    let time = data[next_index].x();
+                    let x = time - data[orgin_index].x();
+                    let height = best_gradient * x + origin.y();
+                    baseline.push(Point2D::new(time, height));
+                    break;
+                }
             }
 
             origin = &next;
@@ -359,7 +400,7 @@ impl Chromatography {
         let mut peak = Peak::default();
         peak.start = self.cleaned_data[pivot].clone();
 
-        let mut new_peak = false;
+        let mut found_maximum = false;
         let mut prev_min = self.cleaned_data[pivot].y() - self.baseline[pivot].y();
 
         for index in pivot..self.cleaned_data.len() {
@@ -386,10 +427,11 @@ impl Chromatography {
             let prev_drv = &self.first_derivative[index - 2];
             let next_drv = &self.first_derivative[index - 1];
 
+            // Minimum
             if prev_drv.y() <= 0.0 && next_drv.y() >= 0.0 {
-                // Minimum
-                if new_peak {
-                    // Real peak
+                // Real peak
+                if found_maximum {
+                    found_maximum = false;
                     prev_min = height;
 
                     peak.end = prev.clone();
@@ -397,8 +439,8 @@ impl Chromatography {
                     result.push(peak);
                     peak = Peak::default();
                     peak.start = prev.clone();
-                } else if height < prev_min {
                     // Lower minimum but without a peak, merge with prev peak
+                } else if height < prev_min {
                     prev_min = height;
 
                     if let Some(prev_peak) = result.last_mut() {
@@ -411,13 +453,17 @@ impl Chromatography {
                 }
             } else if prev_drv.y() >= 0.0 && next_drv.y() <= 0.0 {
                 // Maximum
-                new_peak = height > self.height_requirement;
-                peak.height = height;
+                peak.height = prev.y() - peak.start.y();
+                if peak.height > self.height_requirement {
+                    found_maximum = true;
+                }
+
                 if prev.y() > next.y() {
                     peak.retention_point = prev.clone();
                 } else {
                     peak.retention_point = next.clone();
                 }
+            } else {
             }
 
             let prev_drv2 = &self.second_derivative[index - 3];
