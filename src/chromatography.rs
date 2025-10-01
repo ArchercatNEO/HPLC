@@ -68,10 +68,18 @@ impl Chromatography {
 
         empty.file_name = path.as_ref().file_name().unwrap().to_os_string();
 
+        let mut splitter = String::new();
+        if file.contains('\r') {
+            splitter += "\r";
+        }
+        if file.contains('\n') {
+            splitter += "\n";
+        }
+
         empty.title = {
             let mut name = empty.file_name.clone().into_string().unwrap();
 
-            for line in file.split('\r') {
+            for line in file.split(&splitter) {
                 let mut pair = line.split("\t");
                 if let Some(key) = pair.next() {
                     if key == "\"SampleName\"" {
@@ -84,7 +92,7 @@ impl Chromatography {
         };
 
         empty.raw_data = file
-            .split('\r')
+            .split(&splitter)
             .filter_map(|line| {
                 let mut data = if line.contains("\t") {
                     line.split("\t")
