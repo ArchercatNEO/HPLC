@@ -193,36 +193,36 @@
 <circle cx="133" cy="1000" r="3" opacity="1" fill="#0000FF" stroke="none" stroke-width="1"/>
 <circle cx="176" cy="74" r="3" opacity="1" fill="#00FF00" stroke="none" stroke-width="1"/>
 <text x="176" y="74" dy="0.76em" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#000000">
-[[Unknown], 9.950, 2.190]
+[Calib, 9.950]
 </text>
 <circle cx="307" cy="999" r="3" opacity="1" fill="#0000FF" stroke="none" stroke-width="1"/>
 <circle cx="450" cy="994" r="3" opacity="1" fill="#00FF00" stroke="none" stroke-width="1"/>
 <text x="450" y="994" dy="0.76em" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#000000">
-[[Unknown], 14.083, 2.923]
+[[Unknown], 14.083]
 </text>
 <circle cx="462" cy="994" r="3" opacity="1" fill="#0000FF" stroke="none" stroke-width="1"/>
 <circle cx="645" cy="988" r="3" opacity="1" fill="#00FF00" stroke="none" stroke-width="1"/>
 <text x="645" y="988" dy="0.76em" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#000000">
-[Gb4, 17.017, 3.418]
+[Gb4, 17.017]
 </text>
 <circle cx="667" cy="988" r="3" opacity="1" fill="#0000FF" stroke="none" stroke-width="1"/>
 <circle cx="821" cy="983" r="3" opacity="1" fill="#00FF00" stroke="none" stroke-width="1"/>
 <text x="821" y="983" dy="0.76em" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#000000">
-[[Unknown], 19.667, 3.917]
+[[Unknown], 19.667]
 </text>
 <circle cx="940" cy="981" r="3" opacity="1" fill="#0000FF" stroke="none" stroke-width="1"/>
 <circle cx="1098" cy="976" r="3" opacity="1" fill="#00FF00" stroke="none" stroke-width="1"/>
 <text x="1098" y="976" dy="0.76em" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#000000">
-[[Unknown], 23.833, 4.786]
+[GD2 or alpha 2-6SpG, 23.833]
 </text>
 <circle cx="1438" cy="967" r="3" opacity="1" fill="#0000FF" stroke="none" stroke-width="1"/>
 <circle cx="1594" cy="962" r="3" opacity="1" fill="#00FF00" stroke="none" stroke-width="1"/>
 <text x="1594" y="962" dy="0.76em" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#000000">
-[[Unknown], 31.317, 6.723]
+[[Unknown], 31.317]
 </text>
 <circle cx="1631" cy="961" r="3" opacity="1" fill="#0000FF" stroke="none" stroke-width="1"/>
 <circle cx="1807" cy="956" r="3" opacity="1" fill="#00FF00" stroke="none" stroke-width="1"/>
 <text x="1807" y="956" dy="0.76em" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#000000">
-[[Unknown], 34.517, 7.585]
+[[Unknown], 34.517]
 </text>
 </svg>

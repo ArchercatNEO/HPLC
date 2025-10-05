@@ -59,8 +59,8 @@ impl Default for App {
             dex_handle: None,
             glucose_transformer: None,
             standard_handle: None,
-            injected_volume: 20.0,
-            injected_volume_str: "20.0".to_string(),
+            injected_volume: 50.0,
+            injected_volume_str: "50.0".to_string(),
             sample_dilution: 40.0,
             sample_dilution_str: "40.0".to_string(),
             chart_start: ExpandableSlider::new(8.5, 0.0, 60.0, 0.5, "Chart Start"),
@@ -236,7 +236,7 @@ impl App {
         let injected_volume = {
             let label = text("Vinjection (µl): ");
             let input =
-                text_input("20.0", &self.injected_volume_str).on_input(Message::InjectedVolume);
+                text_input("50.0", &self.injected_volume_str).on_input(Message::InjectedVolume);
             row![label, input]
         };
 
