@@ -224,7 +224,8 @@ It has not been tested on Windows.
 Pre-built binaries are offered for the following systems
 * x86_64-linux
 * x86_64-windows
-* aarch64-darwin
+* aarch64-darwin (Apple Silicon)
+* x86_64-darwin (Apple Intel)
 
 More details in [Installation](#installation)
 Other systems may need to compile from source according to [Compilation](#compilation)

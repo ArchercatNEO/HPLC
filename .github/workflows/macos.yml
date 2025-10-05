@@ -9,11 +9,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         
-      - name: Build
+      - name: Install Cross-compilation requirements
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Build Apple Silicon
         run: cargo build --verbose --release
       
-      - name: Upload Artifacts
+      - name: Build Apple Intel
+        run: cargo build --verbose --release --target x86_64-apple-darwin
+      
+      - name: Upload Apple Silicon Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hplc-rs
+          name: hplc-rs-apple-silicon
           path: ./target/release/HPLC-RS
+      
+      - name: Upload Apple Intel Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hplc-rs-apple-intel
+          path: ./target/x86_64-apple-darwin/release/HPLC-RS
