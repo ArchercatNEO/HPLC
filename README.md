@@ -256,9 +256,8 @@ Select the artifact which matches the OS and architecture of your system and dow
 "Installation" may not be required, the app is self-contained and can be executed directly.
 
 > [!NOTE]
-> I am neither a verified MacOS nor a verified Windows developer which means all artifacts are unsigned
-> If Windows antivirus complains this is the reason
-> MacOS gatekeeper is very likely to prevent you running the app, to disable it follow these instructions https://www.makeuseof.com/how-to-disable-gatekeeper-mac/
+> I am neither a verified MacOS nor a verified Windows developer which means all artifacts are unsigned.
+> If Windows Defender/MacOS Gatekeeper raise a warning about running executables from the internet this is the reason.
 
 # Compilation
 
