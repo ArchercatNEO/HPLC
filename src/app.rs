@@ -662,7 +662,7 @@ impl App {
                 * 0.0025
                 * (1.0 / self.samples[handle].peaks[0].area);
 
-            content.push_str("\n\nConcentrations");
+            content.push_str("\n\nConcentrations (nmol/ml)");
             content.push_str("\nLipid");
             content.push_str(&titles);
 
