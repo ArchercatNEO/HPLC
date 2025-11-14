@@ -175,6 +175,16 @@ impl Chromatography {
     pub fn get_highest_point(&self) -> f64 {
         let mut highest = 0.0;
         for point in &self.cleaned_data {
+            if let Some(range) = &self.data_range {
+                if point.x() < range.start {
+                    continue;
+                }
+
+                if point.x() > range.end {
+                    break;
+                }
+            }
+
             if point.y() > highest {
                 highest = point.y();
             }
