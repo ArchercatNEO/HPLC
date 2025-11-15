@@ -1,11 +1,19 @@
 use std::fs;
 use std::path;
 
-#[derive(Clone, Debug, Default, PartialEq)]
+use crate::spline::Spline;
+
+#[derive(Clone, Debug, PartialEq)]
+enum ExpectedLocation {
+    RetentionTime(f64),
+    GlucoseUnit(f64),
+    Complete(f64, f64),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Reference {
     pub name: Option<String>,
-    pub retention_time: Option<f64>,
-    pub glucose_units: Option<f64>,
+    expected_location: ExpectedLocation,
 }
 
 impl Reference {
@@ -22,18 +30,18 @@ impl Reference {
                     header.split(",")
                 };
 
-                type ReferenceFn = &'static dyn Fn(Reference, &str) -> Reference;
+                type ReferenceFn = &'static dyn Fn(&mut ReferenceBuilder, &str);
 
                 let funcs: Vec<ReferenceFn> = entries
                     .map(|entry| {
                         if entry == "Name" {
-                            &Reference::parse_name
+                            &ReferenceBuilder::parse_name
                         } else if entry == "RT" {
-                            &Reference::parse_retention_time
+                            &ReferenceBuilder::parse_retention_time
                         } else if entry == "GU" {
-                            &Reference::parse_glucose_units
+                            &ReferenceBuilder::parse_glucose_units
                         } else {
-                            let func: ReferenceFn = &Reference::parse_none;
+                            let func: ReferenceFn = &ReferenceBuilder::parse_none;
                             func
                         }
                     })
@@ -41,7 +49,7 @@ impl Reference {
 
                 lines
                     .filter_map(|line| {
-                        let mut reference = Reference::default();
+                        let mut reference_builder = ReferenceBuilder::default();
 
                         let entries = if line.contains("\t") {
                             line.split("\t")
@@ -50,17 +58,31 @@ impl Reference {
                         };
 
                         for (entry, func) in entries.zip(&funcs) {
-                            reference = func(reference, entry);
+                            func(&mut reference_builder, entry);
                         }
 
-                        if reference.retention_time.is_none() && reference.glucose_units.is_none() {
-                            println!(
-                                "Lipid {} needs at least one of retention time or GU",
-                                reference.name.unwrap()
-                            );
-                            None
-                        } else {
-                            Some(reference)
+                        match reference_builder.location {
+                            None => {
+                                match &reference_builder.name {
+                                    Some(name) => eprintln!(
+                                        "Lipid {} needs at least one of retention time or GU",
+                                        name
+                                    ),
+                                    None => eprintln!(
+                                        "Unnamed lipid needs at least one of retention time or GU"
+                                    ),
+                                }
+
+                                None
+                            }
+                            Some(location) => {
+                                let reference = Reference {
+                                    name: reference_builder.name,
+                                    expected_location: location,
+                                };
+
+                                Some(reference)
+                            }
                         }
                     })
                     .collect()
@@ -72,25 +94,74 @@ impl Reference {
         }
     }
 
-    pub fn parse_none(self, _none: &str) -> Self {
-        self
+    pub fn get_expected_location(&self, spline: Option<&Spline>) -> Option<f64> {
+        match (&self.expected_location, spline) {
+            (ExpectedLocation::RetentionTime(rt), None) => Some(*rt),
+            (ExpectedLocation::RetentionTime(rt), Some(spline)) => spline.evaluate(*rt),
+            (ExpectedLocation::GlucoseUnit(_), None) => None,
+            (ExpectedLocation::GlucoseUnit(gu), Some(_)) => Some(*gu),
+            (ExpectedLocation::Complete(rt, _), None) => Some(*rt),
+            (ExpectedLocation::Complete(_, gu), Some(_)) => Some(*gu),
+        }
     }
 
-    pub fn parse_name(mut self, name: &str) -> Self {
-        self.name = Some(name.trim().to_string());
-
-        self
+    pub fn get_expected_rt(&self) -> Option<f64> {
+        match &self.expected_location {
+            ExpectedLocation::RetentionTime(rt) => Some(*rt),
+            ExpectedLocation::GlucoseUnit(_) => None,
+            ExpectedLocation::Complete(rt, _) => Some(*rt),
+        }
     }
 
-    pub fn parse_retention_time(mut self, retention_time: &str) -> Self {
-        self.retention_time = retention_time.parse::<f64>().map_or(None, Some);
+    pub fn get_expected_gu(&self) -> Option<f64> {
+        match &self.expected_location {
+            ExpectedLocation::RetentionTime(_) => None,
+            ExpectedLocation::GlucoseUnit(gu) => Some(*gu),
+            ExpectedLocation::Complete(_, gu) => Some(*gu),
+        }
+    }
+}
 
-        self
+#[derive(Default)]
+struct ReferenceBuilder {
+    pub name: Option<String>,
+    pub location: Option<ExpectedLocation>,
+}
+
+impl ReferenceBuilder {
+    fn parse_none(&mut self, _: &str) {}
+
+    fn parse_name(&mut self, name: &str) {
+        self.name = Some(name.to_string());
     }
 
-    pub fn parse_glucose_units(mut self, glucose_units: &str) -> Self {
-        self.glucose_units = glucose_units.parse::<f64>().map_or(None, Some);
+    fn parse_retention_time(&mut self, rt: &str) {
+        match rt.parse::<f64>() {
+            Ok(rt) => match self.location {
+                None => {
+                    self.location = Some(ExpectedLocation::RetentionTime(rt));
+                }
+                Some(ExpectedLocation::GlucoseUnit(gu)) => {
+                    self.location = Some(ExpectedLocation::Complete(rt, gu));
+                }
+                Some(_) => {}
+            },
+            Err(_) => {}
+        }
+    }
 
-        self
+    fn parse_glucose_units(&mut self, gu: &str) {
+        match gu.parse::<f64>() {
+            Err(_) => {}
+            Ok(gu) => match self.location {
+                None => {
+                    self.location = Some(ExpectedLocation::GlucoseUnit(gu));
+                }
+                Some(ExpectedLocation::RetentionTime(rt)) => {
+                    self.location = Some(ExpectedLocation::Complete(rt, gu));
+                }
+                Some(_) => {}
+            },
+        }
     }
 }

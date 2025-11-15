@@ -537,48 +537,16 @@ impl Chromatography {
 
         let mut matrix: Vec<Vec<Option<f64>>> = Vec::with_capacity(self.lipid_references.len());
         for reference in self.lipid_references.iter() {
-            let time = match &self.glucose_transformer {
-                None => match &reference.retention_time {
-                    Some(rt) => *rt,
-                    None => {
-                        println!("Broken lipid reference {:?}", reference.name);
-                        matrix.push(vec![None; self.peaks.len()]);
-                        continue;
-                    }
-                },
-                Some(spline) => match &reference.glucose_units {
-                    Some(gu) => *gu,
-                    None => match &reference.retention_time {
-                        Some(rt) => {
-                            let maybe_gu = spline.evaluate(*rt);
-                            match maybe_gu {
-                                Some(gu) => gu,
-                                None => {
-                                    println!("Lipid {:?} out of range", reference.name);
-                                    matrix.push(vec![None; self.peaks.len()]);
-                                    continue;
-                                }
-                            }
-                        }
-                        None => {
-                            println!("Broken lipid reference {:?}", reference.name);
-                            matrix.push(vec![None; self.peaks.len()]);
-                            continue;
-                        }
-                    },
-                },
-            };
+            let expected_location =
+                match reference.get_expected_location(self.glucose_transformer.as_ref()) {
+                    Some(location) => location,
+                    None => continue,
+                };
 
             let mut distances: Vec<Option<f64>> = Vec::with_capacity(self.peaks.len());
             for peak in self.peaks.iter() {
-                let distance = match &self.glucose_transformer {
-                    None => Some(f64::abs(peak.retention_point.x() - time)),
-                    Some(spline) => {
-                        let maybe_gu = spline.evaluate(peak.retention_point.x());
-                        maybe_gu.map(|gu| f64::abs(gu - time))
-                    }
-                };
-
+                let peak_location = peak.get_retention_location(self.glucose_transformer.as_ref());
+                let distance = peak_location.map(|location| f64::abs(location - expected_location));
                 distances.push(distance);
             }
             matrix.push(distances);
@@ -649,14 +617,22 @@ impl Chromatography {
 
         combined.sort_by(|left, right| {
             let left_rt = match &left.peak_type {
-                PeakType::Common(reference) => reference.retention_time,
-                PeakType::Missing(reference) => reference.retention_time,
+                PeakType::Common(reference) => {
+                    reference.get_expected_location(self.glucose_transformer.as_ref())
+                }
+                PeakType::Missing(reference) => {
+                    reference.get_expected_location(self.glucose_transformer.as_ref())
+                }
                 _ => panic!(""),
             };
 
             let right_rt = match &right.peak_type {
-                PeakType::Common(reference) => reference.retention_time,
-                PeakType::Missing(reference) => reference.retention_time,
+                PeakType::Common(reference) => {
+                    reference.get_expected_location(self.glucose_transformer.as_ref())
+                }
+                PeakType::Missing(reference) => {
+                    reference.get_expected_location(self.glucose_transformer.as_ref())
+                }
                 _ => panic!(""),
             };
 
@@ -732,22 +708,22 @@ impl Chromatography {
             let name = match &peak.peak_type {
                 PeakType::Unknown => "Unknown",
                 PeakType::Common(reference) => {
-                    if let Some(time) = reference.retention_time {
+                    if let Some(time) = reference.get_expected_rt() {
                         retention_time.push_str(&format!("/{:.2}", time));
                     }
 
-                    if let Some(gu) = reference.glucose_units {
+                    if let Some(gu) = reference.get_expected_gu() {
                         glucose_units.push_str(&format!("/{:.2}", gu));
                     }
 
                     reference.name.as_ref().map_or("[Unnamed]", |inner| &inner)
                 }
                 PeakType::Missing(reference) => {
-                    if let Some(time) = reference.retention_time {
+                    if let Some(time) = reference.get_expected_rt() {
                         retention_time.push_str(&format!("/{:.2}", time));
                     }
 
-                    if let Some(gu) = reference.glucose_units {
+                    if let Some(gu) = reference.get_expected_gu() {
                         glucose_units.push_str(&format!("/{:.2}", gu));
                     }
 

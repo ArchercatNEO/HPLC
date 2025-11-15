@@ -599,7 +599,7 @@ impl App {
         };
 
         for (i, reference) in self.lipid_reference.iter().enumerate() {
-            if let Some(time) = reference.retention_time {
+            if let Some(time) = reference.get_expected_rt() {
                 content.push_str("\n");
                 content.push_str(reference.name.as_ref().map_or("[Unnamed]", |inner| &inner));
                 content.push_str(&format!(",{}", time));
@@ -624,7 +624,7 @@ impl App {
             for (i, reference) in self.lipid_reference.iter().enumerate() {
                 content.push_str("\n");
                 content.push_str(reference.name.as_ref().map_or("[Unnamed]", |inner| &inner));
-                if let Some(gu) = reference.glucose_units {
+                if let Some(gu) = reference.get_expected_gu() {
                     content.push_str(&format!(",{}", gu));
                 } else {
                     content.push_str(",");

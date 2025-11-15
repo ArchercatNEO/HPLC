@@ -3,7 +3,7 @@ use plotters::{
     prelude::*,
 };
 
-use crate::{reference::Reference, vector::*};
+use crate::{reference::Reference, spline::Spline, vector::*};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum PeakType {
@@ -25,6 +25,13 @@ pub struct Peak {
 }
 
 impl Peak {
+    pub fn get_retention_location(&self, spline: Option<&Spline>) -> Option<f64> {
+        match spline {
+            None => Some(self.retention_point.x()),
+            Some(spline) => spline.evaluate(self.retention_point.x()),
+        }
+    }
+
     fn format_label(&self) -> String {
         let name = match &self.peak_type {
             PeakType::Unknown => "[Unknown]",
