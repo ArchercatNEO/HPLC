@@ -471,7 +471,7 @@ impl Chromatography {
                 }
             } else if prev_drv.y() >= 0.0 && next_drv.y() <= 0.0 {
                 // Maximum
-                peak.height = prev.y() - peak.start.y();
+                peak.height = prev.y() - self.baseline[index - 1].y();
                 if peak.height > self.height_requirement {
                     found_maximum = true;
                 }
@@ -481,7 +481,6 @@ impl Chromatography {
                 } else {
                     peak.retention_point = next.clone();
                 }
-            } else {
             }
 
             let prev_drv2 = &self.second_derivative[index - 3];
@@ -496,6 +495,7 @@ impl Chromatography {
             let rising_zero = prev_drv2.y() <= 0.0 && next_drv2.y() >= 0.0;
 
             if rising_zero && prev_drv.y() >= 0.0 {
+                peak.height = next.y() - self.baseline[index].y();
                 peak.retention_point = next.clone();
                 peak.end = next.clone();
                 result.push(peak);
@@ -513,6 +513,7 @@ impl Chromatography {
                 peak = Peak::default();
                 peak.start = next.clone();
                 peak.retention_point = next.clone();
+                peak.height = next.y() - self.baseline[index].y();
             }
         }
 
