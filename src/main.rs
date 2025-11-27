@@ -8,5 +8,7 @@ mod spline;
 mod vector;
 
 fn main() -> iced::Result {
-    iced::run("HPLC", app::App::update, app::App::view)
+    iced::application("HPLC", app::App::update, app::App::view)
+        .theme(|_| iced::theme::Theme::Light)
+        .run()
 }
