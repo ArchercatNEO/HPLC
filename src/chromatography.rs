@@ -23,6 +23,10 @@ pub enum SampleType {
     Standard,
 }
 
+//TODO: parametrise constants
+static MEAN_FILTER_RANGE: usize = 5;
+static DEX_RANGE: Range<f64> = 0.0..38.7;
+
 #[derive(Clone, Debug, Default)]
 pub struct Chromatography {
     // Transformations of the data
@@ -120,34 +124,19 @@ impl Chromatography {
             })
             .collect();
 
-        // TODO: parametrice smoothing factor
-        empty.cleaned_data = Self::mean_filter(&empty.raw_data, 5);
+        empty.cleaned_data = Self::mean_filter(&empty.raw_data, MEAN_FILTER_RANGE);
         empty.first_derivative = Self::calculate_derivative(&empty.cleaned_data);
         empty.second_derivative = Self::calculate_derivative(&empty.first_derivative);
-        empty.baseline = empty.calculate_baseline(None);
-        empty.total_area = empty.calculate_area(None);
-        empty.peaks = empty.calculate_peaks(None);
+        empty.baseline = empty.calculate_baseline();
+        empty.total_area = empty.calculate_area();
+        empty.peaks = empty.calculate_peaks();
         empty.lipids = empty.label_peaks();
 
         Some(empty)
     }
 
     pub fn get_data(&self) -> Vec<Point2D> {
-        match (self.sample_type, &self.data_range) {
-            (SampleType::Dex, _) => self
-                .cleaned_data
-                .iter()
-                .filter(|point| (0.0..38.7).contains(&point.x()))
-                .cloned()
-                .collect(),
-            (_, Some(range)) => self
-                .cleaned_data
-                .iter()
-                .filter(|point| range.contains(&point.x()))
-                .cloned()
-                .collect(),
-            (_, None) => self.cleaned_data.clone(),
-        }
+        self.cleaned_data.clone()
     }
 
     pub fn get_data_range(&self) -> Range<f64> {
@@ -162,12 +151,27 @@ impl Chromatography {
 
     pub fn set_data_range(&mut self, value: &Range<f64>) -> &mut Self {
         self.data_range = Some(value.clone());
-        if self.sample_type != SampleType::Dex {
-            self.baseline = self.calculate_baseline(self.data_range.as_ref());
-            self.total_area = self.calculate_area(self.data_range.as_ref());
-            self.peaks = self.calculate_peaks(self.data_range.as_ref());
-            self.lipids = self.label_peaks();
+
+        if self.sample_type == SampleType::Dex {
+            self.cleaned_data = Self::mean_filter(&self.raw_data, MEAN_FILTER_RANGE)
+                .iter()
+                .filter(|point| DEX_RANGE.contains(&point.x()))
+                .cloned()
+                .collect();
+        } else {
+            self.cleaned_data = Self::mean_filter(&self.raw_data, MEAN_FILTER_RANGE)
+                .iter()
+                .filter(|point| value.contains(&point.x()))
+                .cloned()
+                .collect();
         }
+
+        self.first_derivative = Self::calculate_derivative(&self.cleaned_data);
+        self.second_derivative = Self::calculate_derivative(&self.first_derivative);
+        self.baseline = self.calculate_baseline();
+        self.total_area = self.calculate_area();
+        self.peaks = self.calculate_peaks();
+        self.lipids = self.label_peaks();
 
         self
     }
@@ -175,16 +179,6 @@ impl Chromatography {
     pub fn get_highest_point(&self) -> f64 {
         let mut highest = 0.0;
         for point in &self.cleaned_data {
-            if let Some(range) = &self.data_range {
-                if point.x() < range.start {
-                    continue;
-                }
-
-                if point.x() > range.end {
-                    break;
-                }
-            }
-
             if point.y() > highest {
                 highest = point.y();
             }
@@ -202,7 +196,7 @@ impl Chromatography {
 
     pub fn set_include_unknowns(&mut self, show: &bool) -> &mut Self {
         self.include_unknowns = *show;
-        self.peaks = self.calculate_peaks(self.data_range.as_ref());
+        self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
         self
@@ -210,7 +204,7 @@ impl Chromatography {
 
     pub fn set_height_requirement(&mut self, value: &f64) -> &mut Self {
         self.height_requirement = *value;
-        self.peaks = self.calculate_peaks(self.data_range.as_ref());
+        self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
         self
@@ -218,7 +212,7 @@ impl Chromatography {
 
     pub fn set_inflection_requirement(&mut self, value: &f64) -> &mut Self {
         self.inflection_requirement = *value;
-        self.peaks = self.calculate_peaks(self.data_range.as_ref());
+        self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
         self
@@ -263,7 +257,7 @@ impl Chromatography {
 
     pub fn set_glucose_transformer(&mut self, transformer: &Option<Spline>) -> &mut Self {
         self.glucose_transformer = transformer.clone();
-        self.peaks = self.calculate_peaks(self.data_range.as_ref());
+        self.peaks = self.calculate_peaks();
         self.lipids = self.label_peaks();
 
         self
@@ -277,11 +271,7 @@ impl Chromatography {
         self.sample_type = value.clone();
 
         if *value == SampleType::Dex {
-            let dex_range = Some(0.0..38.7);
-            self.baseline = self.calculate_baseline(dex_range.as_ref());
-            self.total_area = self.calculate_area(dex_range.as_ref());
-            self.peaks = self.calculate_peaks(dex_range.as_ref());
-            self.lipids = self.label_peaks();
+            self.set_data_range(&DEX_RANGE);
         }
 
         self
@@ -324,7 +314,7 @@ impl Chromatography {
         derivative
     }
 
-    fn calculate_baseline(&self, maybe_range: Option<&Range<f64>>) -> Vec<Point2D> {
+    fn calculate_baseline(&self) -> Vec<Point2D> {
         let data = &self.cleaned_data;
 
         let mut origin = &data[0];
@@ -347,12 +337,6 @@ impl Chromatography {
                     next_index = i;
                     best_gradient = gradient;
                 }
-
-                if let Some(range) = maybe_range {
-                    if point.x() > range.end {
-                        break;
-                    }
-                }
             }
 
             for index in orgin_index..next_index {
@@ -360,16 +344,6 @@ impl Chromatography {
                 let x = time - data[orgin_index].x();
                 let height = best_gradient * x + origin.y();
                 baseline.push(Point2D::new(time, height));
-            }
-
-            if let Some(range) = maybe_range {
-                if next.x() > range.end {
-                    let time = data[next_index].x();
-                    let x = time - data[orgin_index].x();
-                    let height = best_gradient * x + origin.y();
-                    baseline.push(Point2D::new(time, height));
-                    break;
-                }
             }
 
             origin = &next;
@@ -380,21 +354,11 @@ impl Chromatography {
         baseline
     }
 
-    fn calculate_area(&self, maybe_range: Option<&Range<f64>>) -> f64 {
+    fn calculate_area(&self) -> f64 {
         let mut area = 0.0;
         for i in 1..self.cleaned_data.len() {
             let prev = self.cleaned_data[i - 1];
             let next = self.cleaned_data[i];
-
-            if let Some(range) = maybe_range {
-                if prev.x() < range.start {
-                    continue;
-                }
-
-                if next.x() > range.end {
-                    break;
-                }
-            }
 
             let width = next.x() - prev.x();
             let a = prev.y() - self.baseline[i - 1].y();
@@ -405,14 +369,8 @@ impl Chromatography {
         return area;
     }
 
-    fn calculate_peaks(&self, maybe_range: Option<&Range<f64>>) -> Vec<Peak> {
-        let mut pivot = 4;
-        if let Some(range) = maybe_range {
-            while self.cleaned_data[pivot].x() < range.start {
-                pivot += 1;
-            }
-        }
-
+    fn calculate_peaks(&self) -> Vec<Peak> {
+        let pivot = 4;
         let mut result = vec![];
 
         let mut peak = Peak::default();
@@ -424,13 +382,6 @@ impl Chromatography {
         for index in pivot..self.cleaned_data.len() {
             let prev = &self.cleaned_data[index - 1];
             let next = &self.cleaned_data[index];
-
-            if let Some(range) = maybe_range {
-                if next.x() > range.end {
-                    break;
-                }
-            }
-
             let height = prev.y() - self.baseline[index - 1].y();
 
             let area = {
