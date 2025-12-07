@@ -32,6 +32,27 @@ impl Peak {
         }
     }
 
+    pub fn get_retention_time(&self) -> Option<f64> {
+        match &self.peak_type {
+            PeakType::Missing(_) => None,
+            _ => Some(self.retention_point.x()),
+        }
+    }
+
+    pub fn get_glucose_units(&self) -> Option<f64> {
+        match &self.peak_type {
+            PeakType::Missing(_) => None,
+            _ => self.gu,
+        }
+    }
+
+    pub fn get_area(&self) -> Option<f64> {
+        match &self.peak_type {
+            PeakType::Missing(_) => None,
+            _ => Some(self.area),
+        }
+    }
+
     fn format_label(&self) -> String {
         let name = match &self.peak_type {
             PeakType::Unknown => "[Unknown]",
