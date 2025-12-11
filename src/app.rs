@@ -514,17 +514,20 @@ impl App {
                             }
                         }
                         SampleType::Standard => {
+                            let area = self.samples[handle].get_unqualified_components()[0].area;
                             self.standard_handle = Some(handle);
                             self.concentration_multiplier = Some(
                                 1000.0
                                     * (1.0 / self.injected_volume)
                                     * self.sample_dilution
                                     * 0.0025
-                                    * (1.0 / self.samples[handle].peaks[0].area),
+                                    * (1.0 / area),
                             );
 
-                            self.exporter
-                                .set_concentration_multiplier(self.concentration_multiplier);
+                            self.exporter.set_concentration_multiplier(
+                                Some(area),
+                                self.concentration_multiplier,
+                            );
                         }
                     }
                 }
@@ -545,11 +548,15 @@ impl App {
                             * (1.0 / self.injected_volume)
                             * self.sample_dilution
                             * 0.0025
-                            * (1.0 / self.samples[handle].peaks[0].area)
+                            * (1.0 / self.samples[handle].get_unqualified_components()[0].area)
                     });
 
+                    let area = self
+                        .standard_handle
+                        .map(|handle| self.samples[handle].get_unqualified_components()[0].area);
+
                     self.exporter
-                        .set_concentration_multiplier(self.concentration_multiplier);
+                        .set_concentration_multiplier(area, self.concentration_multiplier);
                 }
                 self.injected_volume_str = input;
 
@@ -569,11 +576,15 @@ impl App {
                             * (1.0 / self.injected_volume)
                             * self.sample_dilution
                             * 0.0025
-                            * (1.0 / self.samples[handle].peaks[0].area)
+                            * (1.0 / self.samples[handle].get_unqualified_components()[0].area)
                     });
 
+                    let area = self
+                        .standard_handle
+                        .map(|handle| self.samples[handle].get_unqualified_components()[0].area);
+
                     self.exporter
-                        .set_concentration_multiplier(self.concentration_multiplier);
+                        .set_concentration_multiplier(area, self.concentration_multiplier);
                 }
                 self.sample_dilution_str = input;
 

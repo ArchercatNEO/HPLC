@@ -1,9 +1,9 @@
 mod app;
 mod chromatogram;
 mod chromatography;
+mod component;
 mod expandable_slider;
 mod exporter;
-mod peak;
 mod reference;
 mod spline;
 mod vector;

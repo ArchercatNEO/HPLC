@@ -11,15 +11,17 @@ use rfd::FileHandle;
 use std::{fs, rc::Rc};
 
 use crate::{
-    chromatogram::ChromatogramState, chromatography::Chromatography, peak::Peak,
+    chromatogram::ChromatogramState,
+    chromatography::{Chromatography, ComponentFilter},
+    component::Component,
     reference::Reference,
+    spline::Spline,
 };
 
 #[derive(Clone, Debug)]
 pub enum Message {
     None,
     OpenCsvDialog,
-    OpenProfileDialog,
     QueryTargetFile,
     QueryTargetDirectory,
     TargetFile(FileHandle),
@@ -29,6 +31,8 @@ pub enum Message {
     Area(bool),
     Concentration(bool),
     Transpose(bool),
+    IncludeExpected(bool),
+    IncludeExisting(bool),
 }
 
 #[derive(Debug, Default)]
@@ -39,6 +43,8 @@ pub struct Exporter {
 
     // Other state.
     references: Rc<[Reference]>,
+    glucose_spline: Option<Spline>,
+    standard_area: Option<f64>,
     conc_multiplier: Option<f64>,
 
     //User-defined state in order of appearance
@@ -48,10 +54,8 @@ pub struct Exporter {
     area: bool,
     concentration: bool,
 
-    //TODO: Filters.
-    include_labelled: bool,
-    include_unlabelled_exclusive: bool,
-    include_lipids_combined: bool,
+    include_expected: bool,
+    include_existing: bool,
 
     // Other Settings.
     transpose: bool,
@@ -66,7 +70,7 @@ impl Exporter {
 
     pub fn external_profile_view(&self) -> Element<'_, Message> {
         button("Export as profile")
-            .on_press(Message::OpenProfileDialog)
+            .on_press(Message::QueryTargetDirectory)
             .into()
     }
 
@@ -121,6 +125,12 @@ impl Exporter {
 
         let transpose = checkbox("Transpose", self.transpose).on_toggle(Message::Transpose);
 
+        let include_expected =
+            checkbox("Include Expected", self.include_expected).on_toggle(Message::IncludeExpected);
+
+        let include_existing =
+            checkbox("Include Existing", self.include_existing).on_toggle(Message::IncludeExisting);
+
         let preview = {
             let builder = TableBuilderElement::new(self.references.clone(), samples);
             let element = self.export_table(builder);
@@ -144,9 +154,12 @@ impl Exporter {
             area,
             concentration,
             transpose,
+            include_expected,
+            include_existing,
             preview,
             export
         ];
+
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -169,11 +182,6 @@ impl Exporter {
                 self.database_id = Some(id);
                 task.map(|_| Message::None)
             }
-            Message::OpenProfileDialog => {
-                let (id, task) = window::open(Settings::default());
-                self.profiles_id = Some(id);
-                task.map(|_| Message::None)
-            }
             Message::QueryTargetFile => {
                 let task = rfd::AsyncFileDialog::new()
                     .set_file_name("table.csv")
@@ -194,7 +202,10 @@ impl Exporter {
             }
             Message::TargetFile(file_handle) => {
                 let builder = TableBuilderCsv::new(self.references.clone(), samples);
-                let content = self.export_table(builder);
+                let mut content = self.export_table(builder);
+                if let Some(area) = self.standard_area {
+                    content.push_str(&format!("Standard Area: {:.3}", area));
+                }
                 let path = file_handle.path();
                 let _ = fs::write(path, content);
                 Task::none()
@@ -235,6 +246,14 @@ impl Exporter {
                 self.transpose = enable;
                 Task::none()
             }
+            Message::IncludeExpected(enable) => {
+                self.include_expected = enable;
+                Task::none()
+            }
+            Message::IncludeExisting(enable) => {
+                self.include_existing = enable;
+                Task::none()
+            }
         }
     }
 
@@ -246,7 +265,8 @@ impl Exporter {
         self.references = references;
     }
 
-    pub fn set_concentration_multiplier(&mut self, multiplier: Option<f64>) {
+    pub fn set_concentration_multiplier(&mut self, area: Option<f64>, multiplier: Option<f64>) {
+        self.standard_area = area;
         self.conc_multiplier = multiplier;
     }
 
@@ -254,32 +274,67 @@ impl Exporter {
         builder.set_transpose(self.transpose);
 
         if self.retention_time {
-            builder.set_reference_additional("Expected Time", &Reference::get_expected_rt);
-            builder.build_section("Retention Time", &Peak::get_retention_time);
+            if self.include_expected {
+                builder.set_reference_additional("Expected Time", &Reference::get_expected_rt);
+                builder.build_expected_section("Retention Time", &Component::get_experimental_rt);
+            }
+
+            if self.include_existing {
+                builder.build_existing_section("Retention Time", &Component::get_experimental_rt);
+            }
         }
 
         if self.glucose_units {
-            //TODO: consider using splines somehow
-            builder.set_reference_additional("Expected GU", &Reference::get_expected_gu);
-            builder.build_section("Glucose Units", &Peak::get_glucose_units);
+            if self.include_expected {
+                let copy = self.glucose_spline.clone();
+                builder.set_reference_additional("Expected GU", move |reference: &Reference| {
+                    reference.get_expected_gu(copy.as_ref())
+                });
+                builder.build_expected_section("Glucose Units", |component| {
+                    component.get_experimental_gu(self.glucose_spline.as_ref())
+                });
+            }
+
+            if self.include_existing {
+                builder.build_existing_section("Glucose Units", |component| {
+                    component.get_experimental_gu(self.glucose_spline.as_ref())
+                });
+            }
         }
 
         if self.area {
-            builder.set_sample_additional("Total Area", |sample| Some(sample.total_area));
-            builder.build_section("Area", &Peak::get_area);
+            if self.include_expected {
+                builder.set_sample_additional("Total Area", |sample: &Chromatography| {
+                    Some(sample.total_area)
+                });
+
+                builder.build_expected_section("Area", &Component::get_area);
+            }
+
+            if self.include_existing {
+                builder.build_existing_section("Area", &Component::get_area);
+            }
         }
 
         if self.concentration {
-            match self.conc_multiplier {
-                Some(factor) => {
-                    builder.set_sample_additional("Total Concentration", move |sample| {
-                        Some(sample.total_area * factor)
+            if let Some(factor) = self.conc_multiplier {
+                if self.include_expected {
+                    builder.set_sample_additional(
+                        "Total Concentration",
+                        move |sample: &Chromatography| Some(sample.total_area * factor),
+                    );
+                    builder.build_expected_section("Concentration", |component| {
+                        component.get_area().map(|area| area * factor)
                     });
-                    builder.build_section("Area", |peak| peak.get_area().map(|area| area * factor));
                 }
-                None => {
-                    println!("Attempted to export concentrations without a standard set.");
+
+                if self.include_existing {
+                    builder.build_existing_section("Concentration", |component| {
+                        component.get_area().map(|area| area * factor)
+                    });
                 }
+            } else {
+                println!("Attempted to export concentrations without a standard set.");
             }
         }
 
@@ -287,6 +342,21 @@ impl Exporter {
     }
 }
 
+// There are 8 export variants depending on filter settings
+// * None -> Why?
+// * Unknown only -> simple title vs component index
+// * Located only -> ??????
+// * Unknown + Located (existing) -> simple title vs component index
+// * Reference only -> useless, that's what the reference is for
+// * Reference + Unknown -> title vs component index but the reference are used as barriers
+// * Reference + Located (expected) -> title vs reference
+// * Reference + Located + Unknown -> very complex
+
+// They can be reduced to:
+// * Existing only (bool include located)
+// * Expected only
+// * Unknown only with barriers
+// * Existing only with barriers
 trait TableBuilder<T> {
     fn set_reference_additional<F: 'static + Fn(&Reference) -> Option<f64>>(
         &mut self,
@@ -302,7 +372,8 @@ trait TableBuilder<T> {
 
     fn set_transpose(&mut self, enable: bool);
 
-    fn build_section<F: Fn(&Peak) -> Option<f64>>(&mut self, title: &str, extract: F);
+    fn build_existing_section<F: Fn(&Component) -> Option<f64>>(&mut self, title: &str, extract: F);
+    fn build_expected_section<F: Fn(&Component) -> Option<f64>>(&mut self, title: &str, extract: F);
 
     fn build(self) -> T;
 }
@@ -357,7 +428,84 @@ impl<'a> TableBuilder<String> for TableBuilderCsv<'a> {
         self.transpose = enable;
     }
 
-    fn build_section<F: Fn(&Peak) -> Option<f64>>(&mut self, title: &str, extract: F) {
+    fn build_existing_section<F: Fn(&Component) -> Option<f64>>(
+        &mut self,
+        title: &str,
+        extract: F,
+    ) {
+        self.builder.push_str(&format!("[{}]", title));
+
+        let filter = ComponentFilter {
+            unknown: true,
+            located: false,
+            reference: false,
+        };
+
+        if self.transpose {
+            self.builder.push_str("\nTitle");
+
+            let mut max = 0;
+            for sample in self.samples.iter() {
+                if sample.get_components(&filter).len() > max {
+                    max = sample.get_components(&filter).len();
+                }
+            }
+
+            for i in 0..max {
+                self.builder.push_str(&format!(",{}", i));
+            }
+
+            for sample in self.samples.iter() {
+                self.builder.push_str(&format!("\n{}", sample.title));
+                for component in sample.get_components(&filter) {
+                    if let Some(entry) = extract(&component) {
+                        self.builder.push_str(&format!(",{:.3}", entry));
+                    } else {
+                        self.builder.push_str(",");
+                    }
+                }
+            }
+        } else {
+            self.builder.push_str("\nIndex");
+            for sample in self.samples.iter() {
+                self.builder.push_str(&format!(",{}", sample.title));
+            }
+
+            let iterators: Vec<Vec<Component>> = self
+                .samples
+                .iter()
+                .map(|sample| sample.get_components(&filter))
+                .collect();
+
+            let mut index = 0;
+            loop {
+                let mut exhausted = true;
+                self.builder.push_str(&format!("\n{}", index));
+                for components in iterators.iter() {
+                    if let Some(entry) = components.get(index).map_or(None, &extract) {
+                        exhausted = false;
+                        self.builder.push_str(&format!(",{:.3}", entry));
+                    } else {
+                        self.builder.push_str(",");
+                    }
+                }
+
+                if exhausted {
+                    break;
+                }
+
+                index += 1;
+            }
+        }
+
+        self.builder.push_str("\n\n");
+    }
+
+    fn build_expected_section<F: Fn(&Component) -> Option<f64>>(
+        &mut self,
+        title: &str,
+        extract: F,
+    ) {
         let header = format!("[{}]\n", title);
         self.builder.push_str(&header);
 
@@ -406,7 +554,10 @@ impl<'a> TableBuilder<String> for TableBuilderCsv<'a> {
                     self.builder.push_str(&entry);
                 }
 
-                for lipid in sample.lipids.iter() {
+                for lipid in sample
+                    .get_components(&ComponentFilter::EXPECTED_ONLY)
+                    .iter()
+                {
                     let maybe_entry = extract(lipid);
                     let entry = self.format_maybe(maybe_entry);
                     self.builder.push_str(&entry);
@@ -443,7 +594,10 @@ impl<'a> TableBuilder<String> for TableBuilderCsv<'a> {
                 }
 
                 for sample in self.samples.iter() {
-                    let maybe_value = sample.lipids.get(i).map_or(None, &extract);
+                    let maybe_value = sample
+                        .get_components(&ComponentFilter::EXPECTED_ONLY)
+                        .get(i)
+                        .map_or(None, &extract);
                     let entry = self.format_maybe(maybe_value);
                     self.builder.push_str(&entry);
                 }
@@ -511,7 +665,101 @@ impl<'a> TableBuilder<Element<'static, ()>> for TableBuilderElement<'a> {
         self.transpose = enable;
     }
 
-    fn build_section<F: Fn(&Peak) -> Option<f64>>(&mut self, title: &str, extract: F) {
+    fn build_existing_section<F: Fn(&Component) -> Option<f64>>(
+        &mut self,
+        title: &str,
+        extract: F,
+    ) {
+        const ENTRY_WIDTH: u16 = 70;
+
+        let header = text(title.to_string()).into();
+        self.builder.push(header);
+
+        let filter = ComponentFilter {
+            unknown: true,
+            located: false,
+            reference: false,
+        };
+
+        let mut table = column![];
+
+        if self.transpose {
+            let mut top = row![text("Title").width(ENTRY_WIDTH)];
+
+            let mut max = 0;
+            for sample in self.samples.iter() {
+                if sample.get_components(&filter).len() > max {
+                    max = sample.get_components(&filter).len();
+                }
+            }
+
+            for i in 0..max {
+                let index = text(format!("{}", i)).width(ENTRY_WIDTH);
+                top = top.push(index);
+            }
+
+            table = table.push(top);
+
+            for sample in self.samples.iter() {
+                let mut line = row![];
+                line = line.push(text(sample.title.clone()).width(ENTRY_WIDTH));
+                for component in sample.get_components(&filter) {
+                    if let Some(entry) = extract(&component) {
+                        line = line.push(text(format!("{:.3}", entry)).width(ENTRY_WIDTH));
+                    } else {
+                        line = line.push(text("").width(ENTRY_WIDTH));
+                    }
+                }
+
+                table = table.push(line);
+            }
+        } else {
+            let mut top = row![text("Index").width(ENTRY_WIDTH)];
+
+            for sample in self.samples.iter() {
+                top = top.push(text(sample.title.clone()).width(ENTRY_WIDTH));
+            }
+
+            table = table.push(top);
+
+            let iterators: Vec<Vec<Component>> = self
+                .samples
+                .iter()
+                .map(|sample| sample.get_components(&filter))
+                .collect();
+
+            let mut index = 0;
+            loop {
+                let mut exhausted = true;
+                let mut line: widget::Row<'_, _, _, _> = row![];
+                line = line.push(text(index).width(ENTRY_WIDTH));
+                for components in iterators.iter() {
+                    if let Some(entry) = components.get(index).map_or(None, &extract) {
+                        exhausted = false;
+                        line = line.push(text(format!("{:.3}", entry)).width(ENTRY_WIDTH));
+                    } else {
+                        line = line.push(text("").width(ENTRY_WIDTH));
+                    }
+                }
+
+                table = table.push(line);
+
+                if exhausted {
+                    break;
+                }
+
+                index += 1;
+            }
+        }
+
+        self.builder.push(table.into());
+    }
+
+    fn build_expected_section<F: Fn(&Component) -> Option<f64>>(
+        &mut self,
+        title: &str,
+        extract: F,
+    ) {
         const ENTRY_WIDTH: u16 = 70;
 
         let header = text(title.to_string()).into();
@@ -567,7 +815,10 @@ impl<'a> TableBuilder<Element<'static, ()>> for TableBuilderElement<'a> {
                     standard_row = standard_row.push(text(entry).width(ENTRY_WIDTH));
                 }
 
-                for lipid in sample.lipids.iter() {
+                for lipid in sample
+                    .get_components(&ComponentFilter::EXPECTED_ONLY)
+                    .iter()
+                {
                     let maybe_entry = extract(lipid);
                     let entry = self.format_maybe(maybe_entry);
                     standard_row = standard_row.push(text(entry).width(ENTRY_WIDTH));
@@ -607,7 +858,10 @@ impl<'a> TableBuilder<Element<'static, ()>> for TableBuilderElement<'a> {
                 }
 
                 for sample in self.samples.iter() {
-                    let maybe_value = sample.lipids.get(i).map_or(None, &extract);
+                    let maybe_value = sample
+                        .get_components(&ComponentFilter::EXPECTED_ONLY)
+                        .get(i)
+                        .map_or(None, &extract);
                     let entry = self.format_maybe(maybe_value);
                     standard_row = standard_row.push(text(entry).width(ENTRY_WIDTH));
                 }

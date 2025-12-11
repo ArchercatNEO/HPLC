@@ -113,11 +113,12 @@ impl Reference {
         }
     }
 
-    pub fn get_expected_gu(&self) -> Option<f64> {
-        match &self.expected_location {
-            ExpectedLocation::RetentionTime(_) => None,
-            ExpectedLocation::GlucoseUnit(gu) => Some(*gu),
-            ExpectedLocation::Complete(_, gu) => Some(*gu),
+    pub fn get_expected_gu(&self, spline: Option<&Spline>) -> Option<f64> {
+        match (&self.expected_location, spline) {
+            (ExpectedLocation::RetentionTime(_), None) => None,
+            (ExpectedLocation::RetentionTime(rt), Some(spline)) => spline.evaluate(*rt),
+            (ExpectedLocation::GlucoseUnit(gu), _) => Some(*gu),
+            (ExpectedLocation::Complete(_, gu), _) => Some(*gu),
         }
     }
 }

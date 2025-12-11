@@ -1,10 +1,13 @@
 use iced::event::Status;
 use iced::widget::canvas;
 use iced::{Point, keyboard, mouse};
+use plotters::element::{Drawable, PointCollection};
 use plotters::prelude::*;
 use plotters_iced::Chart;
 
-use crate::chromatography::Chromatography;
+use crate::chromatography::{Chromatography, ComponentFilter};
+use crate::component::Component;
+use crate::vector::Point2D;
 
 #[derive(Debug, Clone)]
 pub struct ChromatogramState {
@@ -28,6 +31,45 @@ impl Default for ChromatogramState {
             local_zoom: Point::new(1.0, 1.0),
             local_offset: Point::new(0.0, 0.0),
         }
+    }
+}
+
+impl<'a> PointCollection<'a, Point2D> for &'a Component {
+    type Point = &'a Point2D;
+    type IntoIter = [&'a Point2D; 2];
+
+    fn point_iter(self) -> Self::IntoIter {
+        match self {
+            Component::Unknown(peak) => [&peak.start, &peak.retention_point],
+            Component::Located(peak, _) => [&peak.start, &peak.retention_point],
+            Component::Reference(_) => todo!(),
+        }
+    }
+}
+
+impl<DB: DrawingBackend> Drawable<DB> for Component {
+    fn draw<I: Iterator<Item = (i32, i32)>>(
+        &self,
+        mut pos: I,
+        backend: &mut DB,
+        parent_dim: (u32, u32),
+    ) -> Result<
+        (),
+        plotters_iced::plotters_backend::DrawingErrorKind<<DB as DrawingBackend>::ErrorType>,
+    > {
+        backend.draw_circle(pos.next().unwrap(), 3, &BLUE, true)?;
+
+        let retention = pos.next().unwrap();
+        backend.draw_circle(retention, 3, &GREEN, true)?;
+
+        let text = self.point_label();
+        backend.draw_text(
+            &text,
+            &("sans-serif", 10).into_text_style(&parent_dim),
+            retention,
+        )?;
+
+        Ok(())
     }
 }
 
@@ -91,7 +133,7 @@ impl Chart<()> for Chromatography {
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
 
         chart
-            .draw_series(self.peaks.clone())
+            .draw_series(self.get_components(&ComponentFilter::EXISTING_ONLY).clone())
             .expect("failed to draw series")
             .label("peaks")
             .legend(|(x, y)| Circle::new((x, y), 5, &BLUE));
