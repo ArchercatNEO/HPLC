@@ -277,68 +277,72 @@ impl Exporter {
     fn export_table<TOut, B: TableBuilder<TOut>>(&self, mut builder: B) -> TOut {
         builder.set_transpose(self.transpose);
 
-        if self.retention_time {
-            if self.include_expected {
+        if self.include_expected {
+            if self.retention_time {
                 builder.set_reference_additional("Expected Time", &Reference::get_expected_rt);
-                builder.build_expected_section("Retention Time", &Component::get_experimental_rt);
+                builder.build_expected_section(
+                    "Retention Time (Expected)",
+                    &Component::get_experimental_rt,
+                );
             }
 
-            if self.include_existing {
-                builder.build_existing_section("Retention Time", &Component::get_experimental_rt);
-            }
-        }
-
-        if self.glucose_units {
-            if self.include_expected {
+            if self.glucose_units {
                 let copy = self.glucose_spline.clone();
                 builder.set_reference_additional("Expected GU", move |reference: &Reference| {
                     reference.get_expected_gu(copy.as_ref())
                 });
-                builder.build_expected_section("Glucose Units", |component| {
+                builder.build_expected_section("Glucose Units (Expected)", |component| {
                     component.get_experimental_gu(self.glucose_spline.as_ref())
                 });
             }
 
-            if self.include_existing {
-                builder.build_existing_section("Glucose Units", |component| {
-                    component.get_experimental_gu(self.glucose_spline.as_ref())
-                });
-            }
-        }
-
-        if self.area {
-            if self.include_expected {
+            if self.area {
                 builder.set_sample_additional("Total Area", |sample: &Chromatography| {
                     Some(sample.total_area)
                 });
 
-                builder.build_expected_section("Area", &Component::get_area);
+                builder.build_expected_section("Area (Expected)", &Component::get_area);
             }
 
-            if self.include_existing {
-                builder.build_existing_section("Area", &Component::get_area);
+            if let Some(factor) = self.conc_multiplier {
+                builder.set_sample_additional(
+                    "Total Concentration",
+                    move |sample: &Chromatography| Some(sample.total_area * factor),
+                );
+                builder.build_expected_section("Concentration (Expected)", |component| {
+                    component.get_area().map(|area| area * factor)
+                });
+            } else {
+                println!("Attempted to export concentrations without a standard set.");
             }
         }
 
-        if self.concentration {
-            if let Some(factor) = self.conc_multiplier {
-                if self.include_expected {
-                    builder.set_sample_additional(
-                        "Total Concentration",
-                        move |sample: &Chromatography| Some(sample.total_area * factor),
-                    );
-                    builder.build_expected_section("Concentration", |component| {
-                        component.get_area().map(|area| area * factor)
-                    });
-                }
+        if self.include_existing {
+            if self.retention_time {
+                builder.build_existing_section(
+                    "Retention Time (Unknown)",
+                    &Component::get_experimental_rt,
+                );
+            }
 
-                if self.include_existing {
-                    builder.build_existing_section("Concentration", |component| {
+            if self.glucose_units {
+                builder.build_existing_section("Glucose Units (Unknown)", |component| {
+                    component.get_experimental_gu(self.glucose_spline.as_ref())
+                });
+            }
+
+            if self.area {
+                builder.build_existing_section("Area (Unknown)", &Component::get_area);
+            }
+
+            if self.concentration {
+                if let Some(factor) = self.conc_multiplier {
+                    builder.build_existing_section("Concentration (Unknown)", |component| {
                         component.get_area().map(|area| area * factor)
                     });
+                } else {
+                    println!("Attempted to export concentrations without a standard set.");
                 }
-            } else {
-                println!("Attempted to export concentrations without a standard set.");
             }
         }
 
