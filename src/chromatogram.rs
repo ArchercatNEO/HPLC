@@ -1,13 +1,11 @@
 use iced::event::Status;
 use iced::widget::canvas;
 use iced::{Point, keyboard, mouse};
-use plotters::element::{Drawable, PointCollection};
 use plotters::prelude::*;
 use plotters_iced::Chart;
 
 use crate::chromatography::{Chromatography, ComponentFilter};
 use crate::component::Component;
-use crate::vector::Point2D;
 
 #[derive(Debug, Clone)]
 pub struct ChromatogramState {
@@ -31,45 +29,6 @@ impl Default for ChromatogramState {
             local_zoom: Point::new(1.0, 1.0),
             local_offset: Point::new(0.0, 0.0),
         }
-    }
-}
-
-impl<'a> PointCollection<'a, Point2D> for &'a Component {
-    type Point = &'a Point2D;
-    type IntoIter = [&'a Point2D; 2];
-
-    fn point_iter(self) -> Self::IntoIter {
-        match self {
-            Component::Unknown(peak) => [&peak.start, &peak.retention_point],
-            Component::Located(peak, _) => [&peak.start, &peak.retention_point],
-            Component::Reference(_) => todo!(),
-        }
-    }
-}
-
-impl<DB: DrawingBackend> Drawable<DB> for Component {
-    fn draw<I: Iterator<Item = (i32, i32)>>(
-        &self,
-        mut pos: I,
-        backend: &mut DB,
-        parent_dim: (u32, u32),
-    ) -> Result<
-        (),
-        plotters_iced::plotters_backend::DrawingErrorKind<<DB as DrawingBackend>::ErrorType>,
-    > {
-        backend.draw_circle(pos.next().unwrap(), 3, &BLUE, true)?;
-
-        let retention = pos.next().unwrap();
-        backend.draw_circle(retention, 3, &GREEN, true)?;
-
-        let text = self.point_label();
-        backend.draw_text(
-            &text,
-            &("sans-serif", 10).into_text_style(&parent_dim),
-            retention,
-        )?;
-
-        Ok(())
     }
 }
 
@@ -118,7 +77,6 @@ impl Chart<()> for Chromatography {
             .expect("failed to configure chart");
 
         let data_series = LineSeries::new(self.get_data(), &RED);
-
         chart
             .draw_series(data_series)
             .expect("failed to draw series")
@@ -132,11 +90,55 @@ impl Chart<()> for Chromatography {
             .label("baseline")
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
 
+        let blue_circle = ShapeStyle {
+            color: RGBAColor(0, 0, 255, 1.0),
+            filled: true,
+            stroke_width: 5,
+        };
+
+        let start_points = self
+            .get_components(&ComponentFilter::EXISTING_ONLY)
+            .into_iter()
+            .map(|component| match component {
+                Component::Unknown(peak) => Circle::new(peak.start, 3, blue_circle),
+                Component::Located(peak, _) => Circle::new(peak.start, 3, blue_circle),
+                Component::Reference(_) => panic!("That's not how filters work."),
+            });
+
         chart
-            .draw_series(self.get_components(&ComponentFilter::EXISTING_ONLY).clone())
-            .expect("failed to draw series")
-            .label("peaks")
-            .legend(|(x, y)| Circle::new((x, y), 5, &BLUE));
+            .draw_series(start_points)
+            .expect("failed to draw series");
+
+        let green_circle = ShapeStyle {
+            color: RGBAColor(0, 255, 0, 1.0),
+            filled: true,
+            stroke_width: 5,
+        };
+
+        let text_style = ("sans-serif", 10).into_font();
+
+        let retention_points = self
+            .get_components(&ComponentFilter::EXISTING_ONLY)
+            .into_iter()
+            .map(|component| {
+                let label = component
+                    .point_label(self.glucose_transformer.as_ref())
+                    .unwrap();
+
+                let origin = match component {
+                    Component::Unknown(peak) => EmptyElement::at(peak.retention_point),
+                    Component::Located(peak, _) => EmptyElement::at(peak.retention_point),
+                    Component::Reference(_) => panic!("That's not how filters work."),
+                };
+
+                origin
+                    + Circle::new((0, 0), 3, green_circle)
+                    + Text::new(label, (0, -20), text_style.clone())
+            });
+
+        chart
+            .draw_series(retention_points)
+            .expect("failed to draw series");
     }
 
     fn update(

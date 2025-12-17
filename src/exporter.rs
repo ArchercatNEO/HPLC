@@ -265,6 +265,10 @@ impl Exporter {
         self.references = references;
     }
 
+    pub fn set_glucose_spline(&mut self, spline: Option<&Spline>) {
+        self.glucose_spline = spline.cloned();
+    }
+
     pub fn set_concentration_multiplier(&mut self, area: Option<f64>, multiplier: Option<f64>) {
         self.standard_area = area;
         self.conc_multiplier = multiplier;

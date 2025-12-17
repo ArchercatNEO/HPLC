@@ -72,7 +72,7 @@ pub struct Chromatography {
 
     // External references
     lipid_references: Rc<[Reference]>,
-    glucose_transformer: Option<Spline>,
+    pub glucose_transformer: Option<Spline>,
 
     // Display configuration + state
     //TODO: how can we not put data that is only for rendering here?
@@ -867,7 +867,24 @@ impl Chromatography {
                 builder
             };
 
-            let glucose_units = "H".to_string();
+            let glucose_units = {
+                let mut builder = String::new();
+
+                if let Some(experimental) =
+                    component.get_experimental_gu(self.glucose_transformer.as_ref())
+                {
+                    builder.push_str(&format!("{:.2}", experimental));
+                } else {
+                    builder.push_str("None");
+                }
+
+                if let Some(expected) = component.get_expected_gu(self.glucose_transformer.as_ref())
+                {
+                    builder.push_str(&format!("/{:.2}", expected));
+                }
+
+                builder
+            };
 
             let area = {
                 let mut builder = String::new();

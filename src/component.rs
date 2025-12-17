@@ -86,22 +86,40 @@ impl Component {
         }
     }
 
-    pub fn point_label(&self) -> String {
-        //TODO: implement GU
+    pub fn point_label(&self, spline: Option<&Spline>) -> Option<String> {
+        let mut builder = String::from("[");
         match &self {
             Component::Unknown(peak) => {
-                format!("[Unknown, {:.3}]", peak.retention_point.x())
-            }
-            Component::Located(peak, reference) => {
-                if let Some(name) = &reference.name {
-                    format!("[{}, {:.3}]", name, peak.retention_point.x())
-                } else {
-                    format!("[Unnamed, {:.3}]", peak.retention_point.x())
+                // [Unknown, {}, {}] = rt, gu
+                builder.push_str("Unknown, ");
+                builder.push_str(&format!("{:.3}", peak.retention_point.x()));
+
+                if let Some(spline) = spline {
+                    if let Some(gu) = spline.evaluate(peak.retention_point.x()) {
+                        builder.push_str(&format!(", {:.3}", gu));
+                    }
                 }
             }
-            Component::Reference(_) => {
-                format!("67")
+            Component::Located(peak, reference) => {
+                // [{}, {}, {}] = name, rt, gu
+                if let Some(name) = &reference.name {
+                    builder.push_str(&format!("{}, ", name));
+                } else {
+                    builder.push_str("Unknown, ");
+                }
+
+                builder.push_str(&format!("{:.3}", peak.retention_point.x()));
+
+                if let Some(spline) = spline {
+                    if let Some(gu) = spline.evaluate(peak.retention_point.x()) {
+                        builder.push_str(&format!(", {:.3}", gu));
+                    }
+                }
             }
+            Component::Reference(_) => return None,
         }
+
+        builder.push_str("]");
+        Some(builder)
     }
 }

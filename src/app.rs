@@ -509,6 +509,8 @@ impl App {
                             self.dex_handle = Some(handle);
                             self.glucose_transformer =
                                 self.samples[handle].get_glucose_transformer();
+                            self.exporter
+                                .set_glucose_spline(self.glucose_transformer.as_ref());
                             for sample in self.samples.iter_mut() {
                                 sample.set_glucose_transformer(&self.glucose_transformer);
                             }
