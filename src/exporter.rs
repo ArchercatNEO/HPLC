@@ -304,16 +304,19 @@ impl Exporter {
                 builder.build_expected_section("Area (Expected)", &Component::get_area);
             }
 
-            if let Some(factor) = self.conc_multiplier {
-                builder.set_sample_additional(
-                    "Total Concentration",
-                    move |sample: &Chromatography| Some(sample.total_area * factor),
-                );
-                builder.build_expected_section("Concentration (Expected)", |component| {
-                    component.get_area().map(|area| area * factor)
-                });
-            } else {
-                println!("Attempted to export concentrations without a standard set.");
+            if self.concentration {
+                if let Some(factor) = self.conc_multiplier {
+                    builder.set_sample_additional(
+                        "Total Concentration",
+                        move |sample: &Chromatography| Some(sample.total_area * factor),
+                    );
+                    builder.build_expected_section(
+                        "Concentration (nmol/ml) (Expected)",
+                        |component| component.get_area().map(|area| area * factor),
+                    );
+                } else {
+                    println!("Attempted to export concentrations without a standard set.");
+                }
             }
         }
 
@@ -337,9 +340,10 @@ impl Exporter {
 
             if self.concentration {
                 if let Some(factor) = self.conc_multiplier {
-                    builder.build_existing_section("Concentration (Unknown)", |component| {
-                        component.get_area().map(|area| area * factor)
-                    });
+                    builder
+                        .build_existing_section("Concentration (nmol/ml) (Unknown)", |component| {
+                            component.get_area().map(|area| area * factor)
+                        });
                 } else {
                     println!("Attempted to export concentrations without a standard set.");
                 }
@@ -823,11 +827,11 @@ impl<'a> TableBuilder<Element<'static, ()>> for TableBuilderElement<'a> {
                     standard_row = standard_row.push(text(entry).width(ENTRY_WIDTH));
                 }
 
-                for lipid in sample
+                for component in sample
                     .get_components(&ComponentFilter::EXPECTED_ONLY)
                     .iter()
                 {
-                    let maybe_entry = extract(lipid);
+                    let maybe_entry = extract(component);
                     let entry = self.format_maybe(maybe_entry);
                     standard_row = standard_row.push(text(entry).width(ENTRY_WIDTH));
                 }

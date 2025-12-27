@@ -26,22 +26,6 @@ pub enum Component {
 }
 
 impl Component {
-    pub fn get_experimental_location(&self, spline: Option<&Spline>) -> Option<f64> {
-        match self {
-            Component::Unknown(peak) => peak.get_retention_location(spline),
-            Component::Located(peak, _) => peak.get_retention_location(spline),
-            Component::Reference(_) => None,
-        }
-    }
-
-    pub fn get_expected_location(&self, spline: Option<&Spline>) -> Option<f64> {
-        match self {
-            Component::Unknown(_) => None,
-            Component::Located(_, reference) => reference.get_expected_location(spline),
-            Component::Reference(reference) => reference.get_expected_location(spline),
-        }
-    }
-
     pub fn get_experimental_rt(&self) -> Option<f64> {
         match self {
             Component::Unknown(peak) => Some(peak.retention_point.x()),
