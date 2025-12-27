@@ -4,7 +4,8 @@ use iced::{Point, keyboard, mouse};
 use plotters::prelude::*;
 use plotters_iced::Chart;
 
-use crate::chromatography::Chromatography;
+use crate::chromatography::{Chromatography, ComponentFilter};
+use crate::component::Component;
 
 #[derive(Debug, Clone)]
 pub struct ChromatogramState {
@@ -76,7 +77,6 @@ impl Chart<()> for Chromatography {
             .expect("failed to configure chart");
 
         let data_series = LineSeries::new(self.get_data(), &RED);
-
         chart
             .draw_series(data_series)
             .expect("failed to draw series")
@@ -90,11 +90,55 @@ impl Chart<()> for Chromatography {
             .label("baseline")
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
 
+        let blue_circle = ShapeStyle {
+            color: RGBAColor(0, 0, 255, 1.0),
+            filled: true,
+            stroke_width: 5,
+        };
+
+        let start_points = self
+            .get_components(&ComponentFilter::EXISTING_ONLY)
+            .into_iter()
+            .map(|component| match component {
+                Component::Unknown(peak) => Circle::new(peak.start, 3, blue_circle),
+                Component::Located(peak, _) => Circle::new(peak.start, 3, blue_circle),
+                Component::Reference(_) => panic!("That's not how filters work."),
+            });
+
         chart
-            .draw_series(self.peaks.clone())
-            .expect("failed to draw series")
-            .label("peaks")
-            .legend(|(x, y)| Circle::new((x, y), 5, &BLUE));
+            .draw_series(start_points)
+            .expect("failed to draw series");
+
+        let green_circle = ShapeStyle {
+            color: RGBAColor(0, 255, 0, 1.0),
+            filled: true,
+            stroke_width: 5,
+        };
+
+        let text_style = ("sans-serif", 10).into_font();
+
+        let retention_points = self
+            .get_components(&ComponentFilter::EXISTING_ONLY)
+            .into_iter()
+            .map(|component| {
+                let label = component
+                    .point_label(self.glucose_transformer.as_ref())
+                    .unwrap();
+
+                let origin = match component {
+                    Component::Unknown(peak) => EmptyElement::at(peak.retention_point),
+                    Component::Located(peak, _) => EmptyElement::at(peak.retention_point),
+                    Component::Reference(_) => panic!("That's not how filters work."),
+                };
+
+                origin
+                    + Circle::new((0, 0), 3, green_circle)
+                    + Text::new(label, (0, -20), text_style.clone())
+            });
+
+        chart
+            .draw_series(retention_points)
+            .expect("failed to draw series");
     }
 
     fn update(

@@ -9,7 +9,7 @@ use iced::color;
 use iced::widget::{container, row, scrollable, text};
 use iced::{Element, Point, widget::column};
 
-use crate::peak::{Peak, PeakType};
+use crate::component::{Component, Peak};
 use crate::reference::Reference;
 use crate::spline::Spline;
 use crate::vector::*;
@@ -21,6 +21,26 @@ pub enum SampleType {
     Blank,
     Dex,
     Standard,
+}
+
+pub struct ComponentFilter {
+    pub unknown: bool,
+    pub located: bool,
+    pub reference: bool,
+}
+
+impl ComponentFilter {
+    pub const EXISTING_ONLY: ComponentFilter = ComponentFilter {
+        unknown: true,
+        located: true,
+        reference: false,
+    };
+
+    pub const EXPECTED_ONLY: ComponentFilter = ComponentFilter {
+        unknown: false,
+        located: true,
+        reference: true,
+    };
 }
 
 //TODO: parametrise constants
@@ -35,9 +55,11 @@ pub struct Chromatography {
     first_derivative: Vec<Point2D>,
     second_derivative: Vec<Point2D>,
     pub baseline: Vec<Point2D>,
-    pub peaks: Vec<Peak>,
-    pub lipids: Vec<Peak>,
     pub total_area: f64,
+
+    // Derived components
+    existing_components: Vec<Peak>,
+    qualified_components: Vec<Component>,
 
     // Chromatography configuration
     sample_type: SampleType,
@@ -50,7 +72,7 @@ pub struct Chromatography {
 
     // External references
     lipid_references: Rc<[Reference]>,
-    glucose_transformer: Option<Spline>,
+    pub glucose_transformer: Option<Spline>,
 
     // Display configuration + state
     //TODO: how can we not put data that is only for rendering here?
@@ -129,8 +151,8 @@ impl Chromatography {
         empty.second_derivative = Self::calculate_derivative(&empty.first_derivative);
         empty.baseline = empty.calculate_baseline();
         empty.total_area = empty.calculate_area();
-        empty.peaks = empty.calculate_peaks();
-        empty.lipids = empty.label_peaks();
+        empty.existing_components = empty.calculate_components();
+        empty.qualified_components = empty.identify_components();
 
         Some(empty)
     }
@@ -170,8 +192,8 @@ impl Chromatography {
         self.second_derivative = Self::calculate_derivative(&self.first_derivative);
         self.baseline = self.calculate_baseline();
         self.total_area = self.calculate_area();
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
+        self.existing_components = self.calculate_components();
+        self.qualified_components = self.identify_components();
 
         self
     }
@@ -187,53 +209,69 @@ impl Chromatography {
         highest
     }
 
+    pub fn get_unqualified_components(&self) -> Vec<Peak> {
+        self.existing_components.clone()
+    }
+
+    pub fn get_components(&self, filter: &ComponentFilter) -> Vec<Component> {
+        self.qualified_components
+            .iter()
+            .cloned()
+            .filter(|component| match component {
+                Component::Unknown(_) => filter.unknown,
+                Component::Located(_, _) => filter.located,
+                Component::Reference(_) => filter.reference,
+            })
+            .collect()
+    }
+
     pub fn set_lipid_references(&mut self, value: Rc<[Reference]>) -> &mut Self {
         self.lipid_references = value;
-        self.lipids = self.label_peaks();
+        self.qualified_components = self.identify_components();
 
         self
     }
 
     pub fn set_include_unknowns(&mut self, show: &bool) -> &mut Self {
         self.include_unknowns = *show;
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
+        self.existing_components = self.calculate_components();
+        self.qualified_components = self.identify_components();
 
         self
     }
 
     pub fn set_height_requirement(&mut self, value: &f64) -> &mut Self {
         self.height_requirement = *value;
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
+        self.existing_components = self.calculate_components();
+        self.qualified_components = self.identify_components();
 
         self
     }
 
     pub fn set_inflection_requirement(&mut self, value: &f64) -> &mut Self {
         self.inflection_requirement = *value;
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
+        self.existing_components = self.calculate_components();
+        self.qualified_components = self.identify_components();
 
         self
     }
 
     pub fn set_retention_time_tolerance(&mut self, value: &f64) -> &mut Self {
         self.retention_time_tolerance = *value;
-        self.lipids = self.label_peaks();
+        self.qualified_components = self.identify_components();
 
         self
     }
 
     pub fn set_glucose_unit_tolerance(&mut self, value: &f64) -> &mut Self {
         self.glucose_unit_tolerance = *value;
-        self.lipids = self.label_peaks();
+        self.qualified_components = self.identify_components();
 
         self
     }
 
     pub fn get_glucose_transformer(&self) -> Option<Spline> {
-        let mut peaks = self.peaks.clone();
+        let mut peaks = self.existing_components.clone();
         peaks.reverse();
 
         let mut height = 0.0;
@@ -257,8 +295,8 @@ impl Chromatography {
 
     pub fn set_glucose_transformer(&mut self, transformer: &Option<Spline>) -> &mut Self {
         self.glucose_transformer = transformer.clone();
-        self.peaks = self.calculate_peaks();
-        self.lipids = self.label_peaks();
+        self.existing_components = self.calculate_components();
+        self.qualified_components = self.identify_components();
 
         self
     }
@@ -369,7 +407,7 @@ impl Chromatography {
         return area;
     }
 
-    fn calculate_peaks(&self) -> Vec<Peak> {
+    fn calculate_components(&self) -> Vec<Peak> {
         let pivot = 4;
         let mut result = vec![];
 
@@ -468,18 +506,33 @@ impl Chromatography {
             }
         }
 
-        if let Some(spline) = &self.glucose_transformer {
-            for peak in result.iter_mut() {
-                peak.gu = spline.evaluate(peak.retention_point.x());
-            }
-        }
-
         result
     }
 
-    fn label_peaks(&mut self) -> Vec<Peak> {
-        for peak in self.peaks.iter_mut() {
-            peak.peak_type = PeakType::Unknown;
+    fn identify_components(&self) -> Vec<Component> {
+        // We need to create 3 lists here
+        // * Only components present in the reference (Located + Reference)
+        // * Only components present in the sample but with metadata attached (Located + Unknown)
+        // * All components we could possibly include (Unknown + Located + Reference)
+
+        if self.existing_components.is_empty() && self.lipid_references.is_empty() {
+            return vec![];
+        }
+
+        if self.lipid_references.is_empty() {
+            return self
+                .existing_components
+                .iter()
+                .map(|peak| Component::Unknown(peak.clone()))
+                .collect();
+        }
+
+        if self.existing_components.is_empty() {
+            return self
+                .lipid_references
+                .iter()
+                .map(|reference| Component::Reference(reference.clone()))
+                .collect();
         }
 
         let tolerance = match self.glucose_transformer {
@@ -487,110 +540,262 @@ impl Chromatography {
             None => self.retention_time_tolerance,
         };
 
-        let mut matrix: Vec<Vec<Option<f64>>> = Vec::with_capacity(self.lipid_references.len());
-        for reference in self.lipid_references.iter() {
-            let expected_location =
-                match reference.get_expected_location(self.glucose_transformer.as_ref()) {
+        let mut available_references: Vec<Option<&Reference>> = self
+            .lipid_references
+            .iter()
+            .map(|reference| Some(reference))
+            .collect();
+
+        let mut available_components: Vec<Option<&Peak>> = self
+            .existing_components
+            .iter()
+            .map(|component| Some(component))
+            .collect();
+
+        //? This is O(n^3)
+        let mut located_components = vec![];
+        loop {
+            let mut shortest_distance = None;
+            let mut best_reference = None;
+            let mut best_component = None;
+
+            for (i, maybe_reference) in available_references.iter().enumerate() {
+                let maybe_location = maybe_reference.map_or(None, |reference| {
+                    reference.get_expected_location(self.glucose_transformer.as_ref())
+                });
+                let expected_location = match maybe_location {
                     Some(location) => location,
                     None => continue,
                 };
 
-            let mut distances: Vec<Option<f64>> = Vec::with_capacity(self.peaks.len());
-            for peak in self.peaks.iter() {
-                let peak_location = peak.get_retention_location(self.glucose_transformer.as_ref());
-                let distance = peak_location.map(|location| f64::abs(location - expected_location));
-                distances.push(distance);
-            }
-            matrix.push(distances);
-        }
+                for (j, maybe_component) in available_components.iter().enumerate() {
+                    let maybe_location = maybe_component.map_or(None, |component| {
+                        component.get_retention_location(self.glucose_transformer.as_ref())
+                    });
+                    let component_location = match maybe_location {
+                        Some(location) => location,
+                        None => continue,
+                    };
 
-        let mut known = vec![];
-        let mut found = 0;
-        while found < self.lipid_references.len() {
-            let mut closest_lipid = 0;
-            let mut closest_peak = 0;
-            let mut closest_distance = None;
-            for reference in 0..self.lipid_references.len() {
-                for peak in 0..self.peaks.len() {
-                    let potential_distance = matrix[reference][peak];
-                    match (closest_distance, potential_distance) {
-                        (None, None) => {}
-                        (None, Some(_)) => {
-                            closest_distance = potential_distance;
-                            closest_lipid = reference;
-                            closest_peak = peak;
+                    let distance = f64::abs(component_location - expected_location);
+                    if let Some(best_distance) = shortest_distance {
+                        if distance < best_distance {
+                            shortest_distance = Some(distance);
+                            best_reference = Some(i);
+                            best_component = Some(j);
                         }
-                        (Some(_), None) => {}
-                        (Some(current), Some(potential)) => {
-                            if potential < current {
-                                closest_distance = potential_distance;
-                                closest_lipid = reference;
-                                closest_peak = peak;
-                            }
-                        }
+                    } else {
+                        shortest_distance = Some(distance);
+                        best_reference = Some(i);
+                        best_component = Some(j);
                     }
                 }
             }
 
-            if closest_distance.is_none() || closest_distance.unwrap() > tolerance {
-                break;
-            }
+            match (shortest_distance, best_reference, best_component) {
+                (Some(distance), Some(reference), Some(component)) => {
+                    if distance > tolerance {
+                        break;
+                    }
 
-            let peak = &mut self.peaks[closest_peak];
-            peak.peak_type = PeakType::Common(self.lipid_references[closest_lipid].clone());
-            known.push(peak.clone());
+                    let borrow_ref = available_references[reference].unwrap();
+                    let borrow_component = available_components[component].unwrap();
+                    located_components.push((borrow_component, borrow_ref));
 
-            matrix[closest_lipid] = vec![None; self.peaks.len()];
-            for lipid in 0..matrix.len() {
-                matrix[lipid][closest_peak] = None;
-            }
-
-            found += 1;
-        }
-
-        let mut combined = Vec::with_capacity(self.lipid_references.len());
-        for reference in self.lipid_references.iter() {
-            let maybe_pair = known.iter().find(|peak| match &peak.peak_type {
-                PeakType::Common(potential) => reference == potential,
-                _ => false,
-            });
-
-            match maybe_pair {
-                Some(pair) => {
-                    combined.push(pair.clone());
+                    available_references[reference] = None;
+                    available_components[component] = None;
                 }
-                None => {
-                    let mut missing = Peak::default();
-                    missing.peak_type = PeakType::Missing(reference.clone());
-                    combined.push(missing);
+                _ => {
+                    break;
                 }
             }
         }
 
-        combined.sort_by(|left, right| {
-            let left_rt = match &left.peak_type {
-                PeakType::Common(reference) => {
-                    reference.get_expected_location(self.glucose_transformer.as_ref())
-                }
-                PeakType::Missing(reference) => {
-                    reference.get_expected_location(self.glucose_transformer.as_ref())
-                }
-                _ => panic!(""),
-            };
-
-            let right_rt = match &right.peak_type {
-                PeakType::Common(reference) => {
-                    reference.get_expected_location(self.glucose_transformer.as_ref())
-                }
-                PeakType::Missing(reference) => {
-                    reference.get_expected_location(self.glucose_transformer.as_ref())
-                }
-                _ => panic!(""),
-            };
-
-            left_rt.unwrap().total_cmp(&right_rt.unwrap())
+        located_components.sort_by(|left, right| {
+            left.0
+                .retention_point
+                .x()
+                .total_cmp(&right.0.retention_point.x())
         });
-        combined
+
+        // Time to iterate across 3 vectors at once
+        // It won't be pretty.
+        let mut complete_components = vec![];
+
+        let mut unknown_components = self
+            .existing_components
+            .iter()
+            .filter_map(|peak| {
+                if let Some(location) =
+                    peak.get_retention_location(self.glucose_transformer.as_ref())
+                {
+                    Some((peak, location))
+                } else {
+                    None
+                }
+            })
+            .peekable();
+
+        let mut located_components = located_components
+            .iter()
+            .filter_map(|(peak, reference)| {
+                if let Some(location) =
+                    peak.get_retention_location(self.glucose_transformer.as_ref())
+                {
+                    Some((*peak, *reference, location))
+                } else {
+                    None
+                }
+            })
+            .peekable();
+
+        let mut reference_components = self
+            .lipid_references
+            .iter()
+            .filter_map(|reference| {
+                if let Some(location) =
+                    reference.get_expected_location(self.glucose_transformer.as_ref())
+                {
+                    Some((reference, location))
+                } else {
+                    None
+                }
+            })
+            .peekable();
+
+        loop {
+            match (
+                unknown_components.peek(),
+                located_components.peek(),
+                reference_components.peek(),
+            ) {
+                (None, None, None) => break,
+                (None, None, Some((reference, _))) => {
+                    complete_components.push(Component::Reference((*reference).clone()));
+                    reference_components.next();
+                }
+                (None, Some((located_peak, located_reference, _)), None) => {
+                    complete_components.push(Component::Located(
+                        (*located_peak).clone(),
+                        (*located_reference).clone(),
+                    ));
+                    located_components.next();
+                }
+                (
+                    None,
+                    Some((located_peak, located_reference, located_location)),
+                    Some((reference, expected_location)),
+                ) => {
+                    if located_reference == reference {
+                        complete_components.push(Component::Located(
+                            (*located_peak).clone(),
+                            (*located_reference).clone(),
+                        ));
+                        located_components.next();
+                        reference_components.next();
+                        continue;
+                    }
+
+                    if located_location < expected_location {
+                        complete_components.push(Component::Located(
+                            (*located_peak).clone(),
+                            (*located_reference).clone(),
+                        ));
+                        located_components.next();
+                    } else {
+                        complete_components.push(Component::Reference((*reference).clone()));
+                        reference_components.next();
+                    }
+                }
+                (Some((unknown, _)), None, None) => {
+                    complete_components.push(Component::Unknown((*unknown).clone()));
+                    unknown_components.next();
+                }
+                (Some((unknown, unknown_location)), None, Some((reference, expected_location))) => {
+                    if unknown_location < expected_location {
+                        complete_components.push(Component::Unknown((*unknown).clone()));
+                        unknown_components.next();
+                    } else {
+                        complete_components.push(Component::Reference((*reference).clone()));
+                        reference_components.next();
+                    }
+                }
+                (
+                    Some((unknown, unknown_location)),
+                    Some((located_peak, located_reference, located_location)),
+                    None,
+                ) => {
+                    if located_peak == unknown {
+                        complete_components.push(Component::Located(
+                            (*located_peak).clone(),
+                            (*located_reference).clone(),
+                        ));
+                        located_components.next();
+                        unknown_components.next();
+                        continue;
+                    }
+
+                    if unknown_location < located_location {
+                        complete_components.push(Component::Unknown((*unknown).clone()));
+                        unknown_components.next();
+                    } else {
+                        complete_components.push(Component::Located(
+                            (*located_peak).clone(),
+                            (*located_reference).clone(),
+                        ));
+                        located_components.next();
+                    }
+                }
+                (
+                    Some((unknown, unknown_location)),
+                    Some((located_peak, located_reference, located_location)),
+                    Some((reference, expected_location)),
+                ) => {
+                    if located_peak == unknown && located_reference == reference {
+                        complete_components.push(Component::Located(
+                            (*located_peak).clone(),
+                            (*located_reference).clone(),
+                        ));
+                        located_components.next();
+                        unknown_components.next();
+                        reference_components.next();
+                        continue;
+                    }
+
+                    let merge_peaks = located_peak == unknown;
+                    let merge_references = located_reference == reference;
+
+                    if located_location <= unknown_location && located_location <= expected_location
+                    {
+                        complete_components.push(Component::Located(
+                            (*located_peak).clone(),
+                            (*located_reference).clone(),
+                        ));
+                        located_components.next();
+
+                        if merge_peaks {
+                            unknown_components.next();
+                        }
+
+                        if merge_references {
+                            reference_components.next();
+                        }
+
+                        continue;
+                    }
+
+                    if unknown_location < expected_location {
+                        complete_components.push(Component::Unknown((*unknown).clone()));
+                        unknown_components.next();
+                    } else {
+                        complete_components.push(Component::Reference((*reference).clone()));
+                        reference_components.next();
+                    }
+                }
+            }
+        }
+
+        complete_components
     }
 
     pub fn set_global_zoom(&mut self, zoom: &Point<f64>) -> &mut Self {
@@ -635,52 +840,74 @@ impl Chromatography {
         table = table.push(text(spacer_string.clone()));
         table = table.push(header);
 
-        let iter = if self.include_unknowns {
-            &self.peaks
-        } else {
-            &self.lipids
-        };
-
-        for peak in iter {
-            let mut retention_time = format!("{:.2}", peak.retention_point.x());
-            let area = format!("{:.2}", peak.area);
-
-            let mut glucose_units = match &peak.peak_type {
-                PeakType::Missing(_) => "0.00".to_string(),
-                _ => {
-                    let value = self.glucose_transformer.as_ref().map_or(0.0, |function| {
-                        function.evaluate(peak.retention_point.x()).unwrap()
-                    });
-                    format!("{:.2}", value)
+        for component in self.qualified_components.iter() {
+            let name = match component {
+                Component::Unknown(_) => "[Unknown]".to_string(),
+                Component::Located(_, reference) => {
+                    reference.name.clone().unwrap_or("[Unnamed]".to_string())
+                }
+                Component::Reference(reference) => {
+                    reference.name.clone().unwrap_or("[Unnamed]".to_string())
                 }
             };
 
-            let concentration = format!("{:.2}", peak.area * concentration_multiplier);
+            let retention_time = {
+                let mut builder = String::new();
 
-            let name = match &peak.peak_type {
-                PeakType::Unknown => "Unknown",
-                PeakType::Common(reference) => {
-                    if let Some(time) = reference.get_expected_rt() {
-                        retention_time.push_str(&format!("/{:.2}", time));
-                    }
-
-                    if let Some(gu) = reference.get_expected_gu() {
-                        glucose_units.push_str(&format!("/{:.2}", gu));
-                    }
-
-                    reference.name.as_ref().map_or("[Unnamed]", |inner| &inner)
+                if let Some(experimental) = component.get_experimental_rt() {
+                    builder.push_str(&format!("{:.2}", experimental));
+                } else {
+                    builder.push_str("None");
                 }
-                PeakType::Missing(reference) => {
-                    if let Some(time) = reference.get_expected_rt() {
-                        retention_time.push_str(&format!("/{:.2}", time));
-                    }
 
-                    if let Some(gu) = reference.get_expected_gu() {
-                        glucose_units.push_str(&format!("/{:.2}", gu));
-                    }
-
-                    reference.name.as_ref().map_or("[Unnamed]", |inner| &inner)
+                if let Some(expected) = component.get_expected_rt() {
+                    builder.push_str(&format!("/{:.2}", expected));
                 }
+
+                builder
+            };
+
+            let glucose_units = {
+                let mut builder = String::new();
+
+                if let Some(experimental) =
+                    component.get_experimental_gu(self.glucose_transformer.as_ref())
+                {
+                    builder.push_str(&format!("{:.2}", experimental));
+                } else {
+                    builder.push_str("None");
+                }
+
+                if let Some(expected) = component.get_expected_gu(self.glucose_transformer.as_ref())
+                {
+                    builder.push_str(&format!("/{:.2}", expected));
+                }
+
+                builder
+            };
+
+            let area = {
+                let mut builder = String::new();
+
+                if let Some(area) = component.get_area() {
+                    builder.push_str(&format!("{:.2}", area));
+                } else {
+                    builder.push_str("None");
+                }
+
+                builder
+            };
+
+            let concentration = {
+                let mut builder = String::new();
+
+                if let Some(area) = component.get_area() {
+                    builder.push_str(&format!("{:.2}", area * concentration_multiplier));
+                } else {
+                    builder.push_str("None");
+                }
+
+                builder
             };
 
             let content = row![
